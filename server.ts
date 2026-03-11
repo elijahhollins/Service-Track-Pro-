@@ -1,8 +1,10 @@
+import 'dotenv/config';
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import { fileURLToPath } from "url";
+import { supabase } from "./src/supabaseClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -135,6 +137,25 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Simple in-memory rate-limiting middleware factory
+  function createRateLimiter(maxAttempts: number, windowMs: number) {
+    const attempts = new Map<string, { count: number; resetAt: number }>();
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      const ip = req.ip || req.socket.remoteAddress || "unknown";
+      const now = Date.now();
+      const entry = attempts.get(ip);
+      if (!entry || now > entry.resetAt) {
+        attempts.set(ip, { count: 1, resetAt: now + windowMs });
+        return next();
+      }
+      if (entry.count >= maxAttempts) {
+        return res.status(429).json({ error: "Too many attempts. Please try again later." });
+      }
+      entry.count++;
+      return next();
+    };
+  }
+
   // API Routes
   
   // Auth
@@ -146,6 +167,56 @@ async function startServer() {
     } else {
       res.status(401).json({ error: "Invalid credentials" });
     }
+  });
+
+  app.post("/api/signup", createRateLimiter(5, 15 * 60 * 1000), async (req, res) => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: "Name, email, and password are required" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: "Password must be at least 6 characters" });
+    }
+
+    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (existing) {
+      return res.status(409).json({ error: "A user with this email already exists" });
+    }
+
+    if (supabase) {
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const signUpPromise = supabase.auth.signUp({ email, password });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("Supabase request timed out")), 5000);
+        });
+        const { error: supabaseError } = await Promise.race([signUpPromise, timeoutPromise]);
+        clearTimeout(timeoutId);
+        if (supabaseError) {
+          // status > 0 means Supabase responded with a real auth error (e.g. "User already
+          // registered"). status === 0 indicates a network/connection failure which we treat
+          // as non-fatal so local signup still succeeds.
+          if (supabaseError.status && supabaseError.status > 0) {
+            return res.status(400).json({ error: supabaseError.message });
+          }
+          console.warn("Supabase signup unavailable:", supabaseError.message);
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        console.warn("Supabase signup error:", err);
+      }
+    }
+
+    // New users created through self-service signup are always foremen.
+    // Admins can be promoted via the User Management panel.
+    const info = db.prepare(
+      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)"
+    ).run(name, email, password, "foreman");
+
+    const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+    res.json(user);
   });
 
   app.get("/api/users", (req, res) => {

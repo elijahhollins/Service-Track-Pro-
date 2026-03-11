@@ -29,21 +29,48 @@ import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, Us
 const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    if (res.ok) {
-      const user = await res.json();
-      onLogin(user);
+    setError('');
+    setLoading(true);
+
+    if (isSignUp) {
+      const res = await fetch('/api/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onLogin(data);
+      } else {
+        setError(data.error || 'Failed to create account');
+      }
     } else {
-      setError('Invalid email or password');
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (res.ok) {
+        const user = await res.json();
+        onLogin(user);
+      } else {
+        setError('Invalid email or password');
+      }
     }
+
+    setLoading(false);
+  };
+
+  const switchMode = () => {
+    setIsSignUp(!isSignUp);
+    setError('');
   };
 
   return (
@@ -58,18 +85,31 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             <Briefcase className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold font-display text-slate-900">Service Track Pro</h1>
-          <p className="text-slate-500">Sign in to your account</p>
+          <p className="text-slate-500">{isSignUp ? 'Create your account' : 'Sign in to your account'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">{error}</div>}
+          {isSignUp && (
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+              <input
+                type="text"
+                required
+                className="input-field"
+                placeholder="John Smith"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+            </div>
+          )}
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
             <input 
               type="email" 
               required 
               className="input-field" 
-              placeholder="admin@example.com"
+              placeholder={isSignUp ? 'you@example.com' : 'admin@example.com'}
               value={email}
               onChange={e => setEmail(e.target.value)}
             />
@@ -85,16 +125,30 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
               onChange={e => setPassword(e.target.value)}
             />
           </div>
-          <button type="submit" className="btn-primary w-full py-3 text-lg mt-4">Sign In</button>
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4">
+            {loading ? 'Please wait…' : (isSignUp ? 'Create Account' : 'Sign In')}
+          </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-400">
-            Demo Accounts:<br/>
-            Admin: admin@example.com / admin123<br/>
-            Foreman: john@example.com / foreman123
-          </p>
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={switchMode}
+            className="text-sm text-brand hover:underline"
+          >
+            {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+          </button>
         </div>
+
+        {!isSignUp && (
+          <div className="mt-6 pt-6 border-t border-slate-100 text-center">
+            <p className="text-xs text-slate-400">
+              Demo Accounts:<br/>
+              Admin: admin@example.com / admin123<br/>
+              Foreman: john@example.com / foreman123
+            </p>
+          </div>
+        )}
       </motion.div>
     </div>
   );
