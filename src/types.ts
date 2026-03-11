@@ -31,6 +31,13 @@ export interface WorkLog {
   data: WorkLogEntry;
 }
 
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  role: 'admin' | 'foreman';
+}
+
 export interface Job {
   id?: number;
   customer_name: string;
@@ -41,6 +48,7 @@ export interface Job {
   end_date: string;
   notes: string;
   status: 'active' | 'completed';
+  foreman_id?: number;
   logs?: WorkLog[];
 }
 

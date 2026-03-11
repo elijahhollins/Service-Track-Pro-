@@ -11,6 +11,14 @@ const db = new Database("servicetrack.db");
 
 // Initialize Database Schema
 db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    role TEXT NOT NULL -- 'admin' or 'foreman'
+  );
+
   CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -45,7 +53,9 @@ db.exec(`
     start_date TEXT,
     end_date TEXT,
     notes TEXT,
-    status TEXT DEFAULT 'active'
+    status TEXT DEFAULT 'active',
+    foreman_id INTEGER,
+    FOREIGN KEY (foreman_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS work_logs (
@@ -58,6 +68,11 @@ db.exec(`
   );
 
   -- Seed Data
+  INSERT OR IGNORE INTO users (id, name, email, password, role) VALUES
+    (1, 'Admin User', 'admin@example.com', 'admin123', 'admin'),
+    (2, 'John Foreman', 'john@example.com', 'foreman123', 'foreman'),
+    (3, 'Sarah Foreman', 'sarah@example.com', 'foreman123', 'foreman');
+
   INSERT OR IGNORE INTO employees (id, name, role, hourly_rate) VALUES 
     (1, 'John Smith', 'Foreman', 85.00),
     (2, 'Mike Johnson', 'Electrician', 65.00),
@@ -86,18 +101,52 @@ async function startServer() {
 
   // API Routes
   
+  // Auth
+  app.post("/api/login", (req, res) => {
+    const { email, password } = req.body;
+    const user = db.prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?").get(email, password);
+    if (user) {
+      res.json(user);
+    } else {
+      res.status(401).json({ error: "Invalid credentials" });
+    }
+  });
+
+  app.get("/api/users", (req, res) => {
+    const users = db.prepare("SELECT id, name, email, role FROM users").all();
+    res.json(users);
+  });
+
+  app.post("/api/users/:id/promote", (req, res) => {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
+  });
+
+  app.get("/api/foremen", (req, res) => {
+    const foremen = db.prepare("SELECT id, name, email, role FROM users WHERE role = 'foreman'").all();
+    res.json(foremen);
+  });
+
   // Jobs
   app.get("/api/jobs", (req, res) => {
-    const jobs = db.prepare("SELECT * FROM jobs ORDER BY id DESC").all();
+    const userId = req.query.userId;
+    const role = req.query.role;
+
+    let jobs;
+    if (role === 'foreman') {
+      jobs = db.prepare("SELECT * FROM jobs WHERE foreman_id = ? ORDER BY id DESC").all(userId);
+    } else {
+      jobs = db.prepare("SELECT * FROM jobs ORDER BY id DESC").all();
+    }
     res.json(jobs);
   });
 
   app.post("/api/jobs", (req, res) => {
-    const { customer_name, job_name, job_number, address, start_date, end_date, notes } = req.body;
+    const { customer_name, job_name, job_number, address, start_date, end_date, notes, foreman_id } = req.body;
     const info = db.prepare(`
-      INSERT INTO jobs (customer_name, job_name, job_number, address, start_date, end_date, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(customer_name, job_name, job_number, address, start_date, end_date, notes);
+      INSERT INTO jobs (customer_name, job_name, job_number, address, start_date, end_date, notes, foreman_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(customer_name, job_name, job_number, address, start_date, end_date, notes, foreman_id);
     res.json({ id: info.lastInsertRowid });
   });
 

@@ -15,14 +15,92 @@ import {
   Copy,
   Check,
   Download,
-  Printer
+  Printer,
+  Search,
+  X,
+  MoreVertical,
+  Filter
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User } from './types';
 
 // --- Components ---
 
-const Layout = ({ children, activeTab, setActiveTab }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void }) => {
+const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (res.ok) {
+      const user = await res.json();
+      onLogin(user);
+    } else {
+      setError('Invalid email or password');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
+      >
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+            <Briefcase className="w-6 h-6 text-white" />
+          </div>
+          <h1 className="text-2xl font-bold font-display text-slate-900">Service Track Pro</h1>
+          <p className="text-slate-500">Sign in to your account</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">{error}</div>}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
+            <input 
+              type="email" 
+              required 
+              className="input-field" 
+              placeholder="admin@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+            <input 
+              type="password" 
+              required 
+              className="input-field" 
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary w-full py-3 text-lg mt-4">Sign In</button>
+        </form>
+
+        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+          <p className="text-xs text-slate-400">
+            Demo Accounts:<br/>
+            Admin: admin@example.com / admin123<br/>
+            Foreman: john@example.com / foreman123
+          </p>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, onLogout: () => void }) => {
   return (
     <div className="min-h-screen flex flex-col md:flex-row">
       {/* Sidebar */}
@@ -43,23 +121,42 @@ const Layout = ({ children, activeTab, setActiveTab }: { children: React.ReactNo
             <span className="font-medium">Jobs</span>
             {activeTab === 'jobs' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
           </button>
-          <button 
-            onClick={() => setActiveTab('settings')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'settings' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
-          >
-            <SettingsIcon className="w-5 h-5" />
-            <span className="font-medium">Settings</span>
-            {activeTab === 'settings' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
-          </button>
+          {user.role === 'admin' && (
+            <>
+              <button 
+                onClick={() => setActiveTab('users')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'users' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+              >
+                <Users className="w-5 h-5" />
+                <span className="font-medium">Users</span>
+                {activeTab === 'users' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+              </button>
+              <button 
+                onClick={() => setActiveTab('settings')}
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'settings' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+              >
+                <SettingsIcon className="w-5 h-5" />
+                <span className="font-medium">Settings</span>
+                {activeTab === 'settings' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+              </button>
+            </>
+          )}
         </nav>
         
         <div className="p-4 border-t border-slate-800">
-          <div className="flex items-center gap-3 px-4 py-2">
-            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white font-bold border border-slate-600">EH</div>
-            <div className="flex flex-col overflow-hidden">
-              <span className="text-sm text-white font-medium truncate">Elijah Hollins</span>
-              <span className="text-xs truncate">Admin</span>
+          <div className="flex items-center justify-between px-4 py-2">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs text-white font-bold border border-slate-600 flex-shrink-0">
+                {user.name.charAt(0)}
+              </div>
+              <div className="flex flex-col overflow-hidden">
+                <span className="text-sm text-white font-medium truncate">{user.name}</span>
+                <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">{user.role}</span>
+              </div>
             </div>
+            <button onClick={onLogout} className="text-slate-500 hover:text-white transition-colors">
+              <Plus className="w-5 h-5 rotate-45" />
+            </button>
           </div>
         </div>
       </aside>
@@ -72,20 +169,26 @@ const Layout = ({ children, activeTab, setActiveTab }: { children: React.ReactNo
   );
 };
 
-const Dashboard = ({ onSelectJob }: { onSelectJob: (id: number) => void }) => {
+const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, user: User }) => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isAdding, setIsAdding] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [foremen, setForemen] = useState<User[]>([]);
   const [newJob, setNewJob] = useState<Partial<Job>>({
     customer_name: '',
     job_name: '',
     job_number: '',
     address: '',
-    status: 'active'
+    status: 'active',
+    foreman_id: undefined
   });
 
   useEffect(() => {
-    fetch('/api/jobs').then(res => res.json()).then(setJobs);
-  }, []);
+    fetch(`/api/jobs?userId=${user.id}&role=${user.role}`).then(res => res.json()).then(setJobs);
+    if (user.role === 'admin') {
+      fetch('/api/foremen').then(res => res.json()).then(setForemen);
+    }
+  }, [user]);
 
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,111 +201,172 @@ const Dashboard = ({ onSelectJob }: { onSelectJob: (id: number) => void }) => {
     onSelectJob(data.id);
   };
 
+  const filteredJobs = jobs.filter(job => 
+    job.job_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    job.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    job.job_number?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      <div className="flex justify-between items-end mb-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12">
         <div>
-          <h2 className="text-3xl font-bold text-slate-900 tracking-tight font-display">Active Jobs</h2>
+          <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">Active Jobs</h2>
           <p className="text-slate-500 mt-1">Manage your ongoing projects and daily logs.</p>
         </div>
-        <button 
-          onClick={() => setIsAdding(true)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" />
-          New Job
-        </button>
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="relative flex-1 md:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search jobs..." 
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand/20 outline-none transition-all"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          {user.role === 'admin' && (
+            <button 
+              onClick={() => setIsAdding(true)}
+              className="btn-primary flex items-center gap-2 whitespace-nowrap shadow-lg shadow-brand/20"
+            >
+              <Plus className="w-5 h-5" />
+              New Job
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {jobs.map(job => (
-          <motion.div 
-            key={job.id}
-            whileHover={{ y: -4 }}
-            className="card cursor-pointer group"
-            onClick={() => onSelectJob(job.id!)}
-          >
-            <div className="p-6">
-              <div className="flex justify-between items-start mb-4">
-                <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
-                  {job.status}
+      {filteredJobs.length === 0 ? (
+        <div className="p-20 border-2 border-dashed border-slate-200 rounded-3xl text-center">
+          <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <Briefcase className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-900">No jobs found</h3>
+          <p className="text-slate-500 mt-1">Try a different search or create a new project.</p>
+          <button onClick={() => setIsAdding(true)} className="mt-4 text-brand font-bold hover:underline">Create your first job</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredJobs.map(job => (
+            <motion.div 
+              key={job.id}
+              whileHover={{ y: -4 }}
+              className="card cursor-pointer group"
+              onClick={() => onSelectJob(job.id!)}
+            >
+              <div className="p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
+                    {job.status}
+                  </div>
+                  <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
                 </div>
-                <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
-              </div>
-              <h3 className="text-xl font-bold text-slate-900 group-hover:text-slate-600 transition-colors">{job.job_name}</h3>
-              <p className="text-slate-500 text-sm mt-1">{job.customer_name}</p>
-              
-              <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
-                <div className="flex items-center gap-2 text-slate-400">
-                  <Calendar className="w-4 h-4" />
-                  <span className="text-xs">{job.start_date || 'No date'}</span>
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-brand transition-colors">{job.job_name}</h3>
+                <p className="text-slate-500 text-sm mt-1">{job.customer_name}</p>
+                
+                <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Calendar className="w-4 h-4" />
+                    <span className="text-xs">{job.start_date || 'No date'}</span>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-all">
+                    <ChevronRight className="w-5 h-5" />
+                  </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-900 transition-colors" />
               </div>
-            </div>
-          </motion.div>
-        ))}
-      </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
       <AnimatePresence>
         {isAdding && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden"
             >
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="text-xl font-bold font-display">Create New Job</h3>
-                <button onClick={() => setIsAdding(false)} className="text-slate-400 hover:text-slate-900">
-                  <Plus className="w-6 h-6 rotate-45" />
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <div>
+                  <h3 className="text-2xl font-bold font-display text-slate-900">New Project</h3>
+                  <p className="text-slate-500 text-sm">Set up a new job to start tracking logs.</p>
+                </div>
+                <button onClick={() => setIsAdding(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                  <X className="w-6 h-6 text-slate-400" />
                 </button>
               </div>
-              <form onSubmit={handleCreateJob} className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="col-span-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Name</label>
-                    <input 
-                      required
-                      className="input-field" 
-                      placeholder="e.g. City Power & Light"
-                      value={newJob.customer_name ?? ''}
-                      onChange={e => setNewJob({...newJob, customer_name: e.target.value})}
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Job Name</label>
-                    <input 
-                      required
-                      className="input-field" 
-                      placeholder="e.g. Substation Upgrade"
-                      value={newJob.job_name ?? ''}
-                      onChange={e => setNewJob({...newJob, job_name: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Job Number</label>
-                    <input 
-                      className="input-field" 
-                      placeholder="e.g. 2024-001"
-                      value={newJob.job_number ?? ''}
-                      onChange={e => setNewJob({...newJob, job_number: e.target.value})}
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Start Date</label>
-                    <input 
-                      type="date"
-                      className="input-field"
-                      value={newJob.start_date ?? ''}
-                      onChange={e => setNewJob({...newJob, start_date: e.target.value})}
-                    />
+              <form onSubmit={handleCreateJob} className="p-8 space-y-6">
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer / Company</label>
+                      <input 
+                        required
+                        className="input-field text-lg" 
+                        placeholder="e.g. City Power & Light"
+                        value={newJob.customer_name ?? ''}
+                        onChange={e => setNewJob({...newJob, customer_name: e.target.value})}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Project Name</label>
+                      <input 
+                        required
+                        className="input-field text-lg" 
+                        placeholder="e.g. Substation Upgrade"
+                        value={newJob.job_name ?? ''}
+                        onChange={e => setNewJob({...newJob, job_name: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Job Number</label>
+                      <input 
+                        className="input-field font-mono" 
+                        placeholder="e.g. 2024-001"
+                        value={newJob.job_number ?? ''}
+                        onChange={e => setNewJob({...newJob, job_number: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Start Date</label>
+                      <input 
+                        type="date"
+                        className="input-field"
+                        value={newJob.start_date ?? ''}
+                        onChange={e => setNewJob({...newJob, start_date: e.target.value})}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Assign Foreman</label>
+                      <select 
+                        required
+                        className="input-field"
+                        value={newJob.foreman_id ?? ''}
+                        onChange={e => setNewJob({...newJob, foreman_id: Number(e.target.value)})}
+                      >
+                        <option value="">Select a Foreman</option>
+                        {foremen.map(f => (
+                          <option key={f.id} value={f.id}>{f.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Site Address</label>
+                      <input 
+                        className="input-field" 
+                        placeholder="123 Industrial Way, Springfield"
+                        value={newJob.address ?? ''}
+                        onChange={e => setNewJob({...newJob, address: e.target.value})}
+                      />
+                    </div>
                   </div>
                 </div>
-                <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" className="btn-primary flex-1">Create Job</button>
+                <div className="pt-4 flex gap-4">
+                  <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1 py-4">Cancel</button>
+                  <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20">Create Project</button>
                 </div>
               </form>
             </motion.div>
@@ -213,7 +377,7 @@ const Dashboard = ({ onSelectJob }: { onSelectJob: (id: number) => void }) => {
   );
 };
 
-const JobDetails = ({ jobId, onBack }: { jobId: number, onBack: () => void }) => {
+const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void, user: User }) => {
   const [job, setJob] = useState<Job | null>(null);
   const [isAddingLog, setIsAddingLog] = useState(false);
   const [isViewingInvoice, setIsViewingInvoice] = useState(false);
@@ -275,13 +439,15 @@ const JobDetails = ({ jobId, onBack }: { jobId: number, onBack: () => void }) =>
           <p className="text-slate-500 text-lg">{job.customer_name} • {job.address}</p>
         </div>
         <div className="flex gap-3">
-          <button 
-            onClick={() => setIsViewingInvoice(true)}
-            className="btn-secondary flex items-center gap-2"
-          >
-            <FileText className="w-5 h-5" />
-            Invoice
-          </button>
+          {user.role === 'admin' && (
+            <button 
+              onClick={() => setIsViewingInvoice(true)}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <FileText className="w-5 h-5" />
+              Invoice
+            </button>
+          )}
           <button 
             onClick={() => setIsAddingLog(true)}
             className="btn-primary flex items-center gap-2 shadow-lg shadow-brand/20"
@@ -887,6 +1053,14 @@ const Settings = () => {
   const [materials, setMaterials] = useState<Material[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
 
+  const [searchEmployees, setSearchEmployees] = useState('');
+  const [searchEquipment, setSearchEquipment] = useState('');
+  const [searchMaterials, setSearchMaterials] = useState('');
+
+  const [isAddingEmployee, setIsAddingEmployee] = useState(false);
+  const [isAddingEquipment, setIsAddingEquipment] = useState(false);
+  const [isAddingMaterial, setIsAddingMaterial] = useState(false);
+
   const fetchAll = () => {
     fetch('/api/employees').then(res => res.json()).then(setEmployees);
     fetch('/api/equipment').then(res => res.json()).then(setEquipment);
@@ -902,108 +1076,377 @@ const Settings = () => {
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0 });
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0 });
 
-  const handleAddEmployee = async () => {
+  const handleAddEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
     await fetch('/api/employees', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newEmployee)
     });
     setNewEmployee({ name: '', role: '', hourly_rate: 0 });
+    setIsAddingEmployee(false);
     fetchAll();
   };
 
-  const handleAddEquipment = async () => {
+  const handleAddEquipment = async (e: React.FormEvent) => {
+    e.preventDefault();
     await fetch('/api/equipment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newEquipment)
     });
     setNewEquipment({ name: '', hourly_rate: 0 });
+    setIsAddingEquipment(false);
     fetchAll();
   };
 
-  const handleAddMaterial = async () => {
+  const handleAddMaterial = async (e: React.FormEvent) => {
+    e.preventDefault();
     await fetch('/api/materials', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newMaterial)
     });
     setNewMaterial({ name: '', unit_price: 0 });
+    setIsAddingMaterial(false);
     fetchAll();
   };
 
+  const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
+  const filteredEquipment = equipment.filter(e => e.name.toLowerCase().includes(searchEquipment.toLowerCase()));
+  const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchMaterials.toLowerCase()));
+
   return (
-    <div className="p-8 max-w-6xl mx-auto space-y-12">
-      <header>
-        <h2 className="text-3xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
-        <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
+    <div className="p-8 max-w-6xl mx-auto space-y-16">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+        <div>
+          <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
+          <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
+        </div>
+        <div className="flex gap-3">
+          <div className="px-4 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-3 shadow-sm">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-sm font-medium text-slate-600">System Online</span>
+          </div>
+        </div>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
         {/* Employees */}
         <section className="space-y-6">
-          <h3 className="text-xl font-bold flex items-center gap-2 text-slate-900 font-display"><Users className="w-5 h-5 text-brand" /> Employees</h3>
-          <div className="card p-6 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <input className="input-field" placeholder="Name" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
-              <input className="input-field" placeholder="Role" value={newEmployee.role ?? ''} onChange={e => setNewEmployee({...newEmployee, role: e.target.value})} />
-              <input type="number" className="input-field" placeholder="Rate" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
-              <button onClick={handleAddEmployee} className="btn-primary">Add Employee</button>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {employees.map(e => (
-                <div key={e.id} className="py-3 flex justify-between items-center">
-                  <div>
-                    <p className="font-bold text-sm text-slate-900">{e.name}</p>
-                    <p className="text-xs text-slate-400">{e.role}</p>
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                <Users className="w-5 h-5 text-brand" />
+              </div>
+              Employees
+            </h3>
+            <button onClick={() => setIsAddingEmployee(true)} className="p-2 bg-brand text-white rounded-lg shadow-lg shadow-brand/20 hover:scale-105 transition-all">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search employees..." 
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-brand/20 transition-all"
+              value={searchEmployees}
+              onChange={e => setSearchEmployees(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {filteredEmployees.map(e => (
+              <div key={e.id} className="card p-4 flex justify-between items-center group hover:border-brand/30 transition-all">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 font-bold">
+                    {e.name.charAt(0)}
                   </div>
-                  <span className="font-mono text-sm font-bold text-slate-700">${e.hourly_rate}/hr</span>
+                  <div>
+                    <p className="font-bold text-slate-900">{e.name}</p>
+                    <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">{e.role}</p>
+                  </div>
                 </div>
-              ))}
-            </div>
+                <div className="text-right">
+                  <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                </div>
+              </div>
+            ))}
+            {filteredEmployees.length === 0 && (
+              <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+                <p className="text-slate-400 text-sm">No employees found</p>
+              </div>
+            )}
           </div>
         </section>
 
         {/* Equipment */}
         <section className="space-y-6">
-          <h3 className="text-xl font-bold flex items-center gap-2 text-slate-900 font-display"><Truck className="w-5 h-5 text-brand" /> Equipment</h3>
-          <div className="card p-6 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
-              <input className="input-field" placeholder="Equipment Name" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
-              <input type="number" className="input-field" placeholder="Rate" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
-              <button onClick={handleAddEquipment} className="btn-primary col-span-2">Add Equipment</button>
-            </div>
-            <div className="divide-y divide-slate-100">
-              {equipment.map(e => (
-                <div key={e.id} className="py-3 flex justify-between items-center">
-                  <p className="font-bold text-sm text-slate-900">{e.name}</p>
-                  <span className="font-mono text-sm font-bold text-slate-700">${e.hourly_rate}/hr</span>
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+              <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
+                <Truck className="w-5 h-5 text-orange-500" />
+              </div>
+              Equipment
+            </h3>
+            <button onClick={() => setIsAddingEquipment(true)} className="p-2 bg-orange-500 text-white rounded-lg shadow-lg shadow-orange-500/20 hover:scale-105 transition-all">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search equipment..." 
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-orange-500/20 transition-all"
+              value={searchEquipment}
+              onChange={e => setSearchEquipment(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-3">
+            {filteredEquipment.map(e => (
+              <div key={e.id} className="card p-4 flex justify-between items-center group hover:border-orange-500/30 transition-all">
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center">
+                    <Truck className="w-5 h-5 text-orange-400" />
+                  </div>
+                  <p className="font-bold text-slate-900">{e.name}</p>
                 </div>
-              ))}
-            </div>
+                <div className="text-right">
+                  <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                </div>
+              </div>
+            ))}
+            {filteredEquipment.length === 0 && (
+              <div className="py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+                <p className="text-slate-400 text-sm">No equipment found</p>
+              </div>
+            )}
           </div>
         </section>
 
         {/* Materials */}
         <section className="space-y-6 lg:col-span-2">
-          <h3 className="text-xl font-bold flex items-center gap-2 text-slate-900 font-display"><Package className="w-5 h-5 text-brand" /> Materials Price List</h3>
-          <div className="card p-6 space-y-4">
-            <div className="grid grid-cols-3 gap-3">
-              <input className="input-field col-span-1" placeholder="Material Name" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
-              <input type="number" className="input-field" placeholder="Unit Price" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
-              <button onClick={handleAddMaterial} className="btn-primary">Add Material</button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
-              {materials.map(m => (
-                <div key={m.id} className="py-2 border-b border-slate-50 flex justify-between items-center">
-                  <p className="font-medium text-sm text-slate-700">{m.name}</p>
-                  <span className="font-mono text-xs text-slate-400 font-bold">${m.unit_price}</span>
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+              <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                <Package className="w-5 h-5 text-emerald-500" />
+              </div>
+              Materials Price List
+            </h3>
+            <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input 
+              type="text" 
+              placeholder="Search materials..." 
+              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+              value={searchMaterials}
+              onChange={e => setSearchMaterials(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredMaterials.map(m => (
+              <div key={m.id} className="card p-4 flex justify-between items-center group hover:border-emerald-500/30 transition-all">
+                <div>
+                  <p className="font-bold text-slate-900">{m.name}</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">Material Item</p>
                 </div>
-              ))}
-            </div>
+                <div className="text-right">
+                  <p className="font-mono font-bold text-emerald-600">${m.unit_price}</p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase">per unit</p>
+                </div>
+              </div>
+            ))}
+            {filteredMaterials.length === 0 && (
+              <div className="lg:col-span-3 py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+                <p className="text-slate-400 text-sm">No materials found</p>
+              </div>
+            )}
           </div>
         </section>
       </div>
+
+      {/* Modals for Adding */}
+      <AnimatePresence>
+        {isAddingEmployee && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 className="text-xl font-bold font-display">Add Employee</h3>
+                <button onClick={() => setIsAddingEmployee(false)}><X className="w-6 h-6 text-slate-400" /></button>
+              </div>
+              <form onSubmit={handleAddEmployee} className="p-6 space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+                  <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role / Title</label>
+                  <input required className="input-field" placeholder="e.g. Journeyman" value={newEmployee.role ?? ''} onChange={e => setNewEmployee({...newEmployee, role: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
+                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button type="button" onClick={() => setIsAddingEmployee(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" className="btn-primary flex-1">Save Employee</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingEquipment && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 className="text-xl font-bold font-display">Add Equipment</h3>
+                <button onClick={() => setIsAddingEquipment(false)}><X className="w-6 h-6 text-slate-400" /></button>
+              </div>
+              <form onSubmit={handleAddEquipment} className="p-6 space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
+                  <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
+                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button type="button" onClick={() => setIsAddingEquipment(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" className="btn-primary flex-1">Save Equipment</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingMaterial && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 className="text-xl font-bold font-display">Add Material</h3>
+                <button onClick={() => setIsAddingMaterial(false)}><X className="w-6 h-6 text-slate-400" /></button>
+              </div>
+              <form onSubmit={handleAddMaterial} className="p-6 space-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
+                  <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unit Price ($)</label>
+                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
+                </div>
+                <div className="pt-4 flex gap-3">
+                  <button type="button" onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" className="btn-primary flex-1">Save Material</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+const UserManagement = () => {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchUsers = () => {
+    setLoading(true);
+    fetch('/api/users')
+      .then(res => res.json())
+      .then(data => {
+        setUsers(data);
+        setLoading(false);
+      });
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const handlePromote = async (id: number) => {
+    if (!confirm('Are you sure you want to promote this user to Admin? This action cannot be undone.')) return;
+    
+    const res = await fetch(`/api/users/${id}/promote`, { method: 'POST' });
+    if (res.ok) {
+      fetchUsers();
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-4xl mx-auto">
+      <div className="mb-12">
+        <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
+        <p className="text-slate-500 mt-1">Manage company accounts and permissions.</p>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-slate-400">Loading users...</div>
+      ) : (
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
+                        {u.name.charAt(0)}
+                      </div>
+                      <span className="font-bold text-slate-900">{u.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{u.email}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                      u.role === 'admin' 
+                        ? 'bg-purple-50 text-purple-700 border-purple-100' 
+                        : 'bg-blue-50 text-blue-700 border-blue-100'
+                    }`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    {u.role === 'foreman' && (
+                      <button 
+                        onClick={() => handlePromote(u.id)}
+                        className="text-xs font-bold text-brand hover:underline flex items-center gap-1 ml-auto"
+                      >
+                        <Plus className="w-3 h-3" /> Promote to Admin
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 };
@@ -1013,17 +1456,36 @@ const Settings = () => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('service_track_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  const handleLogin = (u: User) => {
+    setUser(u);
+    localStorage.setItem('service_track_user', JSON.stringify(u));
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('service_track_user');
+  };
+
+  if (!user) {
+    return <Login onLogin={handleLogin} />;
+  }
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }}>
+    <Layout activeTab={activeTab} setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }} user={user} onLogout={handleLogout}>
       {activeTab === 'jobs' && (
         selectedJobId ? (
-          <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} />
+          <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
         ) : (
-          <Dashboard onSelectJob={setSelectedJobId} />
+          <Dashboard onSelectJob={setSelectedJobId} user={user} />
         )
       )}
-      {activeTab === 'settings' && <Settings />}
+      {activeTab === 'users' && user.role === 'admin' && <UserManagement />}
+      {activeTab === 'settings' && user.role === 'admin' && <Settings />}
     </Layout>
   );
 }
