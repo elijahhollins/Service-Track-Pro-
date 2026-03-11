@@ -90,7 +90,43 @@ db.exec(`
     (4, '#2 THHN Wire (per ft)', 1.45);
 
   INSERT OR IGNORE INTO templates (id, name, data) VALUES 
-    (1, 'Standard 3-Man Crew', '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":1,"hours":8,"rate":120}],"materials":[]}');
+    (1, 'Standard 3-Man Crew', '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":1,"hours":8,"rate":120}],"materials":[]}'),
+    (2, '2-Man Electrical Crew', '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65}],"equipment":[],"materials":[{"materialId":4,"name":"#2 THHN Wire (per ft)","quantity":100,"unitPrice":1.45}]}');
+
+  INSERT OR IGNORE INTO jobs (id, customer_name, job_name, job_number, address, start_date, end_date, notes, status, foreman_id) VALUES
+    (1, 'Metro City Public Works', 'Main St Underground Utilities', 'JOB-2026-001', '123 Main St, Metro City', '2026-02-10', '2026-04-30', 'Bore and pull 2" conduit from Main/1st to Main/5th. Coordinate with traffic control.', 'active', 2),
+    (2, 'Sunrise Properties LLC', 'Oak Ave Electrical Upgrade', 'JOB-2026-002', '450 Oak Ave, Westside', '2026-02-24', '2026-03-28', 'Panel upgrade and service entrance replacement for commercial strip mall.', 'active', 3),
+    (3, 'County Road Dept', 'River Rd Storm Drain', 'JOB-2026-003', 'River Rd & Hwy 9 Intersection', '2026-01-06', '2026-02-14', 'Install 24" corrugated pipe and new catch basins. Completed ahead of schedule.', 'completed', 2),
+    (4, 'TeleStar Communications', 'Downtown Fiber Install', 'JOB-2025-012', '200 Commerce Blvd, Downtown', '2025-11-03', '2025-12-19', 'Directional bore for fiber optic conduit through downtown core.', 'completed', 3),
+    (5, 'Parks & Recreation Dept', 'Riverside Park Lighting', 'JOB-2026-004', '300 Park Dr, Riverside Park', '2026-03-03', '2026-03-28', 'Install new LED pathway lighting and underground wiring throughout park.', 'active', 2);
+
+  INSERT OR IGNORE INTO work_logs (id, job_id, date, notes, data) VALUES
+    (1,  1, '2026-02-10', 'Site setup and mobilization. Marked bore path and set up traffic control.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":3,"hours":8,"rate":250}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":20,"unitPrice":18.50}]}'),
+    (2,  1, '2026-02-11', 'Completed first 200ft bore. Pulled conduit and backfilled trench section A.',
+      '{"employees":[{"employeeId":1,"hours":10,"rate":85},{"employeeId":2,"hours":10,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":3,"hours":10,"rate":250},{"equipmentId":1,"hours":4,"rate":120}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":20,"unitPrice":18.50},{"materialId":2,"name":"2 inch PVC Coupling","quantity":20,"unitPrice":2.25}]}'),
+    (3,  1, '2026-02-12', 'Second bore section complete. Hit rock at 180ft, switched to jackhammer. Minor delay.',
+      '{"employees":[{"employeeId":1,"hours":10,"rate":85},{"employeeId":2,"hours":9,"rate":65},{"employeeId":3,"hours":9,"rate":45}],"equipment":[{"equipmentId":3,"hours":9,"rate":250},{"equipmentId":2,"hours":5,"rate":95}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":15,"unitPrice":18.50},{"materialId":3,"name":"2 inch PVC Sweep","quantity":4,"unitPrice":12.00}]}'),
+    (4,  2, '2026-02-24', 'Disconnected old service entrance. Installed new 400A panel and meter base.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65}],"equipment":[{"equipmentId":1,"hours":6,"rate":120}],"materials":[{"materialId":4,"name":"#2 THHN Wire (per ft)","quantity":150,"unitPrice":1.45}]}'),
+    (5,  2, '2026-02-25', 'Ran new service conductors from transformer. Terminated and tested all panel circuits.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[],"materials":[{"materialId":4,"name":"#2 THHN Wire (per ft)","quantity":200,"unitPrice":1.45},{"materialId":2,"name":"2 inch PVC Coupling","quantity":8,"unitPrice":2.25}]}'),
+    (6,  3, '2026-01-06', 'Mobilized equipment, excavated first catch basin location.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":2,"hours":8,"rate":95}],"materials":[]}'),
+    (7,  3, '2026-01-07', 'Installed catch basin #1 and first 60ft of pipe.',
+      '{"employees":[{"employeeId":1,"hours":9,"rate":85},{"employeeId":2,"hours":9,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":2,"hours":9,"rate":95},{"equipmentId":1,"hours":3,"rate":120}],"materials":[]}'),
+    (8,  3, '2026-01-08', 'Installed catch basin #2, connected pipe sections, backfilled and compacted.',
+      '{"employees":[{"employeeId":1,"hours":10,"rate":85},{"employeeId":2,"hours":10,"rate":65},{"employeeId":3,"hours":10,"rate":45}],"equipment":[{"equipmentId":2,"hours":10,"rate":95}],"materials":[]}'),
+    (9,  3, '2026-01-09', 'Final inspection, restoration of roadway surface. Job signed off by inspector.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":2,"hours":4,"rate":95},{"equipmentId":1,"hours":2,"rate":120}],"materials":[]}'),
+    (10, 4, '2025-11-03', 'Locates complete, bore entry and exit pits excavated at all 3 crossing points.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65}],"equipment":[{"equipmentId":3,"hours":6,"rate":250}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":10,"unitPrice":18.50}]}'),
+    (11, 4, '2025-11-04', 'Completed two bore crossings. Pulled fiber conduit and sealed both ends.',
+      '{"employees":[{"employeeId":1,"hours":10,"rate":85},{"employeeId":2,"hours":10,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":3,"hours":10,"rate":250}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":15,"unitPrice":18.50},{"materialId":2,"name":"2 inch PVC Coupling","quantity":15,"unitPrice":2.25}]}'),
+    (12, 4, '2025-11-05', 'Final bore crossing complete. Restored all pit locations, final walkthrough with client.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65}],"equipment":[{"equipmentId":3,"hours":6,"rate":250},{"equipmentId":2,"hours":4,"rate":95}],"materials":[{"materialId":3,"name":"2 inch PVC Sweep","quantity":6,"unitPrice":12.00}]}'),
+    (13, 5, '2026-03-03', 'Staked out light pole locations, trenched main feed run from panel to first junction.',
+      '{"employees":[{"employeeId":1,"hours":8,"rate":85},{"employeeId":2,"hours":8,"rate":65},{"employeeId":3,"hours":8,"rate":45}],"equipment":[{"equipmentId":2,"hours":8,"rate":95}],"materials":[{"materialId":1,"name":"2 inch PVC Conduit (10ft)","quantity":15,"unitPrice":18.50},{"materialId":4,"name":"#2 THHN Wire (per ft)","quantity":300,"unitPrice":1.45}]}');
 `);
 
 async function startServer() {
