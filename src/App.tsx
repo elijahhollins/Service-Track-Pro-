@@ -1517,7 +1517,12 @@ export default function App() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [user, setUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('service_track_user');
-    return saved ? JSON.parse(saved) : null;
+    if (saved) return JSON.parse(saved);
+    // Auto-login as admin in development/test mode – bypassed only when not in production.
+    if (import.meta.env.MODE !== 'production') {
+      return { id: 1, name: 'Admin', email: 'admin@example.com', role: 'admin' };
+    }
+    return null;
   });
 
   const handleLogin = (u: User) => {

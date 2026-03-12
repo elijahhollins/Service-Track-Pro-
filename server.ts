@@ -159,8 +159,23 @@ async function startServer() {
   // API Routes
   
   // Auth
-  app.post("/api/login", (req, res) => {
+  app.post("/api/login", createRateLimiter(10, 15 * 60 * 1000), (req, res) => {
     const { email, password } = req.body;
+
+    // In development/test mode authentication is bypassed so any sign-in works
+    // without a valid password. This must never run in production.
+    if (process.env.NODE_ENV !== "production") {
+      const user = db.prepare("SELECT id, name, email, role FROM users WHERE email = ?").get(email);
+      if (user) {
+        return res.json(user);
+      }
+      // Fall back to the default admin account if the e-mail is not in the DB.
+      const admin = db.prepare("SELECT id, name, email, role FROM users WHERE role = 'admin' LIMIT 1").get();
+      if (admin) {
+        return res.json(admin);
+      }
+    }
+
     const user = db.prepare("SELECT id, name, email, role FROM users WHERE email = ? AND password = ?").get(email, password);
     if (user) {
       res.json(user);
