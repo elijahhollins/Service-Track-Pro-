@@ -172,30 +172,38 @@ async function startServer() {
   app.post("/api/signup", createRateLimiter(5, 15 * 60 * 1000), async (req, res) => {
     const { name, email, password } = req.body;
 
-    if (!name || !email || !password) {
-      return res.status(400).json({ error: "Name, email, and password are required" });
+    try {
+      if (!name || !email || !password) {
+        return res.status(400).json({ error: "Name, email, and password are required" });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({ error: "Password must be at least 6 characters" });
+      }
+
+      const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+      if (existing) {
+        return res.status(409).json({ error: "A user with this email already exists" });
+      }
+
+      // New users created through self-service signup are always foremen.
+      // Admins can be promoted via the User Management panel.
+      const info = db.prepare(
+        "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)"
+      ).run(name, email, password, "foreman");
+
+      const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+
+      // Respond immediately so the client is never blocked by the Supabase call.
+      // The Supabase registration runs in the background.
+      res.json(user);
+    } catch (err) {
+      console.error("Signup error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to create account. Please try again." });
+      }
+      return;
     }
-
-    if (password.length < 6) {
-      return res.status(400).json({ error: "Password must be at least 6 characters" });
-    }
-
-    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
-    if (existing) {
-      return res.status(409).json({ error: "A user with this email already exists" });
-    }
-
-    // New users created through self-service signup are always foremen.
-    // Admins can be promoted via the User Management panel.
-    const info = db.prepare(
-      "INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)"
-    ).run(name, email, password, "foreman");
-
-    const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
-
-    // Respond immediately so the client is never blocked by the Supabase call.
-    // The Supabase registration runs in the background.
-    res.json(user);
 
     if (supabase) {
       supabase.auth.signUp({ email, password }).then(({ error }) => {
