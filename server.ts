@@ -185,30 +185,6 @@ async function startServer() {
       return res.status(409).json({ error: "A user with this email already exists" });
     }
 
-    if (supabase) {
-      let timeoutId: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const signUpPromise = supabase.auth.signUp({ email, password });
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error("Supabase request timed out")), 5000);
-        });
-        const { error: supabaseError } = await Promise.race([signUpPromise, timeoutPromise]);
-        clearTimeout(timeoutId);
-        if (supabaseError) {
-          // status > 0 means Supabase responded with a real auth error (e.g. "User already
-          // registered"). status === 0 indicates a network/connection failure which we treat
-          // as non-fatal so local signup still succeeds.
-          if (supabaseError.status && supabaseError.status > 0) {
-            return res.status(400).json({ error: supabaseError.message });
-          }
-          console.warn("Supabase signup unavailable:", supabaseError.message);
-        }
-      } catch (err) {
-        clearTimeout(timeoutId);
-        console.warn("Supabase signup error:", err);
-      }
-    }
-
     // New users created through self-service signup are always foremen.
     // Admins can be promoted via the User Management panel.
     const info = db.prepare(
@@ -216,7 +192,18 @@ async function startServer() {
     ).run(name, email, password, "foreman");
 
     const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(info.lastInsertRowid);
+
+    // Respond immediately so the client is never blocked by the Supabase call.
+    // The Supabase registration runs in the background.
     res.json(user);
+
+    if (supabase) {
+      supabase.auth.signUp({ email, password }).then(({ error }) => {
+        if (error) console.warn("Supabase signup error:", error.message);
+      }).catch(err => {
+        console.warn("Supabase signup unavailable:", err);
+      });
+    }
   });
 
   app.get("/api/users", (req, res) => {
