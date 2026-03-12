@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User } from './types';
+import { supabase } from './supabase';
 
 // --- Components ---
 
@@ -30,52 +31,75 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [error, setError] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
+  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setLoading(true);
-
+    setError('');
+    
     try {
       if (isSignUp) {
-        const res = await fetch('/api/signup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, email, password })
+        // 1. Sign up to Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
         });
-        const data = await res.json();
-        if (res.ok) {
-          onLogin(data);
-        } else {
-          setError(data.error || 'Failed to create account');
+
+        if (authError) throw authError;
+
+        if (authData.user) {
+          // 2. Create profile in public.users
+          const { error: profileError } = await supabase
+            .from('users')
+            .insert([{ 
+              name: name || email.split('@')[0], 
+              email, 
+              password, // Storing for legacy reasons as per your SQL, but Auth handles it
+              role: 'foreman' 
+            }]);
+
+          if (profileError) console.error('Profile creation error:', profileError);
+          
+          setError('Account created! You can now sign in.');
+          setIsSignUp(false);
         }
       } else {
-        const res = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
+        // Sign in
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
         });
-        if (res.ok) {
-          const user = await res.json();
-          onLogin(user);
-        } else {
-          setError('Invalid email or password');
+
+        if (authError) throw authError;
+
+        if (authData.user) {
+          const { data: profile, error: profileError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .single();
+
+          if (profileError) {
+            console.warn('Profile not found in public.users, using fallback');
+            onLogin({
+              id: 0,
+              name: email.split('@')[0],
+              email: email,
+              role: 'foreman'
+            });
+          } else {
+            onLogin(profile as User);
+          }
         }
       }
-    } catch (err) {
-      console.error('Auth request failed:', err);
-      setError('Network error. Please check your connection and try again.');
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
-  };
-
-  const switchMode = () => {
-    setIsSignUp(!isSignUp);
-    setError('');
   };
 
   return (
@@ -94,27 +118,33 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">{error}</div>}
+          {error && (
+            <div className={`p-3 text-sm rounded-lg border ${error.includes('created') ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
+              {error}
+            </div>
+          )}
+          
           {isSignUp && (
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-              <input
-                type="text"
-                required
-                className="input-field"
-                placeholder="John Smith"
+              <input 
+                type="text" 
+                required 
+                className="input-field" 
+                placeholder="John Doe"
                 value={name}
                 onChange={e => setName(e.target.value)}
               />
             </div>
           )}
+
           <div>
             <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
             <input 
               type="email" 
               required 
               className="input-field" 
-              placeholder={isSignUp ? 'you@example.com' : 'admin@example.com'}
+              placeholder="admin@example.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
             />
@@ -130,27 +160,24 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
               onChange={e => setPassword(e.target.value)}
             />
           </div>
-          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4">
-            {loading ? 'Please wait…' : (isSignUp ? 'Create Account' : 'Sign In')}
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
+            {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
           </button>
         </form>
 
         <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={switchMode}
-            className="text-sm text-brand hover:underline"
+          <button 
+            onClick={() => setIsSignUp(!isSignUp)}
+            className="text-sm text-brand font-medium hover:underline"
           >
-            {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+            {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
           </button>
         </div>
 
         {!isSignUp && (
-          <div className="mt-6 pt-6 border-t border-slate-100 text-center">
+          <div className="mt-8 pt-6 border-t border-slate-100 text-center">
             <p className="text-xs text-slate-400">
-              Demo Accounts:<br/>
-              Admin: admin@example.com / admin123<br/>
-              Foreman: john@example.com / foreman123
+              Note: Demo accounts from SQL must be "Signed Up" first to enable Authentication.
             </p>
           </div>
         )}
@@ -243,21 +270,42 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
   });
 
   useEffect(() => {
-    fetch(`/api/jobs?userId=${user.id}&role=${user.role}`).then(res => res.json()).then(setJobs);
+    const fetchJobs = async () => {
+      let query = supabase.from('jobs').select('*').order('id', { ascending: false });
+      
+      if (user.role === 'foreman') {
+        query = query.eq('foreman_id', user.id);
+      }
+      
+      const { data, error } = await query;
+      if (!error && data) setJobs(data as Job[]);
+    };
+
+    const fetchForemen = async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('role', 'foreman');
+      if (!error && data) setForemen(data as User[]);
+    };
+
+    fetchJobs();
     if (user.role === 'admin') {
-      fetch('/api/foremen').then(res => res.json()).then(setForemen);
+      fetchForemen();
     }
   }, [user]);
 
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newJob)
-    });
-    const data = await res.json();
-    onSelectJob(data.id);
+    const { data, error } = await supabase
+      .from('jobs')
+      .insert([newJob])
+      .select()
+      .single();
+      
+    if (!error && data) {
+      onSelectJob(data.id);
+    }
   };
 
   const filteredJobs = jobs.filter(job => 
@@ -445,21 +493,49 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   const [materials, setMaterials] = useState<Material[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
 
-  const fetchJob = () => {
-    fetch(`/api/jobs/${jobId}`).then(res => res.json()).then(setJob);
+  const fetchJob = async () => {
+    const { data: jobData, error: jobError } = await supabase
+      .from('jobs')
+      .select('*')
+      .eq('id', jobId)
+      .single();
+      
+    if (!jobError && jobData) {
+      const { data: logsData, error: logsError } = await supabase
+        .from('work_logs')
+        .select('*')
+        .eq('job_id', jobId)
+        .order('date', { ascending: false });
+        
+      if (!logsError && logsData) {
+        setJob({ ...jobData, logs: logsData } as Job);
+      } else {
+        setJob(jobData as Job);
+      }
+    }
   };
 
   useEffect(() => {
     fetchJob();
-    fetch('/api/employees').then(res => res.json()).then(setEmployees);
-    fetch('/api/equipment').then(res => res.json()).then(setEquipment);
-    fetch('/api/materials').then(res => res.json()).then(setMaterials);
-    fetch('/api/templates').then(res => res.json()).then(setTemplates);
+    const fetchData = async () => {
+      const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+        supabase.from('employees').select('*'),
+        supabase.from('equipment').select('*'),
+        supabase.from('materials').select('*'),
+        supabase.from('templates').select('*')
+      ]);
+      
+      if (empRes.data) setEmployees(empRes.data);
+      if (eqRes.data) setEquipment(eqRes.data);
+      if (matRes.data) setMaterials(matRes.data);
+      if (tempRes.data) setTemplates(tempRes.data);
+    };
+    fetchData();
   }, [jobId]);
 
   const handleDeleteLog = async (id: number) => {
     if (!confirm('Are you sure you want to delete this log?')) return;
-    await fetch(`/api/work-logs/${id}`, { method: 'DELETE' });
+    await supabase.from('work_logs').delete().eq('id', id);
     fetchJob();
   };
 
@@ -470,11 +546,7 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
       notes: log.notes,
       data: log.data
     };
-    await fetch('/api/work-logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLog)
-    });
+    await supabase.from('work_logs').insert([newLog]);
     fetchJob();
   };
 
@@ -688,12 +760,12 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
       equipment: selectedEquipment,
       materials: selectedMaterials
     };
-    await fetch('/api/work-logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ job_id: jobId, date, notes, data: logData })
-    });
-    onSave();
+    
+    const { error } = await supabase
+      .from('work_logs')
+      .insert([{ job_id: jobId, date, notes, data: logData }]);
+      
+    if (!error) onSave();
   };
 
   return (
@@ -1120,11 +1192,18 @@ const Settings = () => {
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
 
-  const fetchAll = () => {
-    fetch('/api/employees').then(res => res.json()).then(setEmployees);
-    fetch('/api/equipment').then(res => res.json()).then(setEquipment);
-    fetch('/api/materials').then(res => res.json()).then(setMaterials);
-    fetch('/api/templates').then(res => res.json()).then(setTemplates);
+  const fetchAll = async () => {
+    const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+      supabase.from('employees').select('*'),
+      supabase.from('equipment').select('*'),
+      supabase.from('materials').select('*'),
+      supabase.from('templates').select('*')
+    ]);
+    
+    if (empRes.data) setEmployees(empRes.data);
+    if (eqRes.data) setEquipment(eqRes.data);
+    if (matRes.data) setMaterials(matRes.data);
+    if (tempRes.data) setTemplates(tempRes.data);
   };
 
   useEffect(() => {
@@ -1137,11 +1216,7 @@ const Settings = () => {
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/employees', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newEmployee)
-    });
+    await supabase.from('employees').insert([newEmployee]);
     setNewEmployee({ name: '', role: '', hourly_rate: 0 });
     setIsAddingEmployee(false);
     fetchAll();
@@ -1149,11 +1224,7 @@ const Settings = () => {
 
   const handleAddEquipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/equipment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newEquipment)
-    });
+    await supabase.from('equipment').insert([newEquipment]);
     setNewEquipment({ name: '', hourly_rate: 0 });
     setIsAddingEquipment(false);
     fetchAll();
@@ -1161,11 +1232,7 @@ const Settings = () => {
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    await fetch('/api/materials', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newMaterial)
-    });
+    await supabase.from('materials').insert([newMaterial]);
     setNewMaterial({ name: '', unit_price: 0 });
     setIsAddingMaterial(false);
     fetchAll();
@@ -1426,14 +1493,13 @@ const UserManagement = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchUsers = () => {
+  const fetchUsers = async () => {
     setLoading(true);
-    fetch('/api/users')
-      .then(res => res.json())
-      .then(data => {
-        setUsers(data);
-        setLoading(false);
-      });
+    const { data, error } = await supabase.from('users').select('*');
+    if (!error && data) {
+      setUsers(data as User[]);
+    }
+    setLoading(false);
   };
 
   useEffect(() => {
@@ -1443,8 +1509,12 @@ const UserManagement = () => {
   const handlePromote = async (id: number) => {
     if (!confirm('Are you sure you want to promote this user to Admin? This action cannot be undone.')) return;
     
-    const res = await fetch(`/api/users/${id}/promote`, { method: 'POST' });
-    if (res.ok) {
+    const { error } = await supabase
+      .from('users')
+      .update({ role: 'admin' })
+      .eq('id', id);
+      
+    if (!error) {
       fetchUsers();
     }
   };
@@ -1515,23 +1585,67 @@ const UserManagement = () => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('service_track_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
-  const handleLogin = (u: User) => {
-    setUser(u);
-    localStorage.setItem('service_track_user', JSON.stringify(u));
+  useEffect(() => {
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchProfile(session.user.email!);
+      } else {
+        setAuthReady(true);
+      }
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchProfile(session.user.email!);
+      } else {
+        setUser(null);
+        setAuthReady(true);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchProfile = async (email: string) => {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
+
+    if (!error && data) {
+      setUser(data as User);
+    } else {
+      // Fallback if profile not found
+      setUser({
+        id: 0,
+        name: email.split('@')[0],
+        email: email,
+        role: 'foreman'
+      });
+    }
+    setAuthReady(true);
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    localStorage.removeItem('service_track_user');
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white font-display text-xl animate-pulse">Initializing...</div>
+      </div>
+    );
+  }
 
   if (!user) {
-    return <Login onLogin={handleLogin} />;
+    return <Login onLogin={setUser} />;
   }
 
   return (
