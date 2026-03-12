@@ -39,33 +39,38 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
     setError('');
     setLoading(true);
 
-    if (isSignUp) {
-      const res = await fetch('/api/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        onLogin(data);
+    try {
+      if (isSignUp) {
+        const res = await fetch('/api/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          onLogin(data);
+        } else {
+          setError(data.error || 'Failed to create account');
+        }
       } else {
-        setError(data.error || 'Failed to create account');
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        if (res.ok) {
+          const user = await res.json();
+          onLogin(user);
+        } else {
+          setError('Invalid email or password');
+        }
       }
-    } else {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      if (res.ok) {
-        const user = await res.json();
-        onLogin(user);
-      } else {
-        setError('Invalid email or password');
-      }
+    } catch (err) {
+      console.error('Auth request failed:', err);
+      setError('Network error. Please check your connection and try again.');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   const switchMode = () => {
