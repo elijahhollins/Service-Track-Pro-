@@ -188,9 +188,9 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
 
 const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, onLogout: () => void }) => {
   return (
-    <div className="min-h-screen flex flex-col md:flex-row">
+    <div className="h-screen flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-400 flex flex-col border-r border-slate-800">
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-400 flex flex-col border-r border-slate-800 flex-shrink-0 overflow-y-auto">
         <div className="p-6 flex items-center gap-3">
           <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
             <Briefcase className="w-5 h-5 text-white" />
@@ -248,7 +248,7 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto bg-slate-50">
+      <main className="flex-1 overflow-y-auto bg-slate-50">
         {children}
       </main>
     </div>
@@ -394,7 +394,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden"
+              className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
             >
               <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                 <div>
@@ -405,7 +405,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                   <X className="w-6 h-6 text-slate-400" />
                 </button>
               </div>
-              <form onSubmit={handleCreateJob} className="p-8 space-y-6">
+              <form onSubmit={handleCreateJob} className="p-8 space-y-6 overflow-y-auto flex-1">
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
@@ -1049,8 +1049,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   const grandTotal = laborTotal + equipmentTotal + materialTotal;
 
   return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-auto">
-      <div className="w-full max-w-4xl min-h-screen py-12">
+    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 overflow-y-auto">
+      <div className="w-full max-w-4xl mx-auto py-12 px-4">
         <div className="flex justify-between items-center mb-8 text-white">
           <h3 className="text-2xl font-bold font-display">Invoice Preview</h3>
           <div className="flex gap-3">
