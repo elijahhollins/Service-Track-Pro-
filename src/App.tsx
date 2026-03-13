@@ -1174,7 +1174,6 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
   const [isEditingSettings, setIsEditingSettings] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const invoiceRef = useRef<HTMLDivElement>(null);
 
   const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
   const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
@@ -1197,45 +1196,303 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   };
 
   const handleExportPdf = async () => {
-    if (!invoiceRef.current || isExportingPdf) return;
+    if (isExportingPdf) return;
     setIsExportingPdf(true);
     try {
-      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
-        import('html2canvas'),
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
         import('jspdf'),
+        import('jspdf-autotable'),
       ]);
 
-      const element = invoiceRef.current;
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-      });
+      const BRAND = [59, 130, 246] as [number, number, number];
+      const DARK  = [15, 23, 42]  as [number, number, number];
+      const GRAY  = [100, 116, 139] as [number, number, number];
+      const LIGHT = [248, 250, 252] as [number, number, number];
+      const WHITE = [255, 255, 255] as [number, number, number];
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'pt',
-        format: 'a4',
-      });
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const PW = pdf.internal.pageSize.getWidth();   // 595
+      const PH = pdf.internal.pageSize.getHeight();  // 842
+      const M  = 40; // margin
+      const CW = PW - M * 2; // content width
 
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth;
-      const imgHeight = (canvas.height * pageWidth) / canvas.width;
+      // ── Brand accent bar (top) ──────────────────────────────────────
+      pdf.setFillColor(...BRAND);
+      pdf.rect(0, 0, PW, 8, 'F');
 
-      // If content is taller than one page, split into multiple pages
-      let yOffset = 0;
-      while (yOffset < imgHeight) {
-        if (yOffset > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -yOffset, imgWidth, imgHeight);
-        yOffset += pageHeight;
+      // ── Company section (left) ──────────────────────────────────────
+      let y = 32;
+      const cLines = [company.address, company.city, company.phone, company.email, company.website].filter(Boolean) as string[];
+      // Logo (base64 image) if present
+      if (company.logo) {
+        try {
+          const ext = company.logo.startsWith('data:image/png') ? 'PNG'
+                    : company.logo.startsWith('data:image/svg') ? 'SVG'
+                    : 'JPEG';
+          pdf.addImage(company.logo, ext, M, y, 50, 50, undefined, 'FAST');
+          // company text to the right of logo
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(14);
+          pdf.setTextColor(...DARK);
+          pdf.text(company.name || 'Company Name', M + 58, y + 14);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...GRAY);
+          cLines.forEach((line, i) => pdf.text(line, M + 58, y + 26 + i * 10));
+        } catch {
+          // Logo failed — fall back to text-only
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(14);
+          pdf.setTextColor(...DARK);
+          pdf.text(company.name || 'Company Name', M, y + 10);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...GRAY);
+          cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
+        }
+      } else {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(...DARK);
+        pdf.text(company.name || 'Company Name', M, y + 10);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...GRAY);
+        cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
       }
 
-      const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
+      // ── INVOICE title + meta (right) ─────────────────────────────────
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(36);
+      pdf.setTextColor(220, 226, 236);
+      pdf.text('INVOICE', PW - M, y + 28, { align: 'right' });
 
-      // Use blob URL to trigger native download/open on mobile
+      pdf.setFontSize(8);
+      const metaLeft  = PW - M - 130;
+      const metaRight = PW - M;
+      const metaRows = [
+        ['Invoice #',    invoiceDetails.invoiceNumber || '—'],
+        ['Invoice Date', formatDate(invoiceDetails.invoiceDate)],
+        ['Due Date',     formatDate(invoiceDetails.dueDate)],
+        ['Date of Order',formatDate(invoiceDetails.dateOfOrder)],
+      ];
+      metaRows.forEach(([label, value], i) => {
+        const ry = y + 44 + i * 12;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(...GRAY);
+        pdf.text(label, metaLeft, ry, { align: 'left' });
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(...DARK);
+        pdf.text(value, metaRight, ry, { align: 'right' });
+      });
+
+      // ── Horizontal rule ─────────────────────────────────────────────
+      y += 100;
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.line(M, y, PW - M, y);
+      y += 14;
+
+      // ── Bill To + Project grid ───────────────────────────────────────
+      const colW = CW / 4;
+      const boxH = 68;
+      const boxPad = 8;
+      const labelFontSize = 7;
+      const valueFontSize = 9;
+      const boxes = [
+        { title: 'Bill To',      lines: [job.customer_name, billToAddress, customer.phone, customer.email].filter(Boolean) as string[] },
+        { title: 'Project',      lines: [job.job_name, `Status: ${job.status}`] },
+        { title: 'Job Number',   lines: [job.job_number] },
+        { title: 'Job Location', lines: [invoiceDetails.jobLocation || job.address || '—'] },
+      ];
+
+      boxes.forEach((box, i) => {
+        const bx = M + i * colW;
+        const by = y;
+        pdf.setFillColor(...LIGHT);
+        pdf.setDrawColor(226, 232, 240);
+        pdf.setLineWidth(0.5);
+        pdf.roundedRect(bx, by, colW - 4, boxH, 4, 4, 'FD');
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(labelFontSize);
+        pdf.setTextColor(...BRAND);
+        pdf.text(box.title.toUpperCase(), bx + boxPad, by + boxPad + 6);
+
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(valueFontSize);
+        pdf.setTextColor(...DARK);
+        box.lines.slice(0, 4).forEach((line, li) => {
+          const displayLine = pdf.splitTextToSize(line, colW - boxPad * 2 - 4)[0];
+          pdf.text(displayLine, bx + boxPad, by + boxPad + 18 + li * 11);
+        });
+      });
+
+      // Amount Due box (replaces last box — full right column)
+      const adX = M + 3 * colW;
+      const adY = y;
+      pdf.setFillColor(...BRAND);
+      pdf.roundedRect(adX, adY, colW - 4, boxH, 4, 4, 'F');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text('AMOUNT DUE', adX + boxPad, adY + boxPad + 6);
+      pdf.setFontSize(18);
+      pdf.text(`$${grandTotal.toFixed(2)}`, adX + boxPad, adY + boxPad + 26);
+      pdf.setFontSize(7);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(200, 220, 255);
+      pdf.text(`Due ${formatDate(invoiceDetails.dueDate)}`, adX + boxPad, adY + boxPad + 40);
+
+      y += boxH + 18;
+
+      // ── Line Items Table ────────────────────────────────────────────
+      const tableBody: (string | { content: string; colSpan?: number; styles?: object })[][] = [];
+
+      (job.logs || []).forEach((log, logIdx) => {
+        const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const headerLabel = `Daily Log #${logIdx + 1}${log.notes ? `  —  ${log.notes}` : ''}`;
+        tableBody.push([
+          { content: headerLabel, colSpan: 5, styles: { fillColor: [239, 246, 255], textColor: BRAND, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 5, bottom: 5, left: 8, right: 8 } } },
+        ]);
+
+        log.data.employees.forEach((e) => {
+          const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+          const role    = employees.find(emp => emp.id === e.employeeId)?.role || '';
+          tableBody.push([
+            `Labor — ${empName}${role ? `  (${role})` : ''}`,
+            logDate,
+            `${e.hours}h`,
+            `$${e.rate.toFixed(2)}/hr`,
+            `$${(e.hours * e.rate).toFixed(2)}`,
+          ]);
+        });
+        log.data.equipment.forEach((e) => {
+          const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+          tableBody.push([`Equipment — ${eqName}`, logDate, `${e.hours}h`, `$${e.rate.toFixed(2)}/hr`, `$${(e.hours * e.rate).toFixed(2)}`]);
+        });
+        log.data.materials.forEach((m) => {
+          tableBody.push([`Material — ${m.name}`, logDate, `${m.quantity} units`, `$${m.unitPrice.toFixed(2)}/unit`, `$${(m.quantity * m.unitPrice).toFixed(2)}`]);
+        });
+      });
+
+      autoTable(pdf, {
+        startY: y,
+        margin: { left: M, right: M },
+        head: [['Description', 'Date', 'Qty / Hrs', 'Rate', 'Total']],
+        body: tableBody,
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 5, textColor: DARK, lineColor: [226, 232, 240], lineWidth: 0.3 },
+        headStyles: { fillColor: DARK, textColor: WHITE, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 6, bottom: 6, left: 5, right: 5 } },
+        alternateRowStyles: { fillColor: LIGHT },
+        columnStyles: {
+          0: { cellWidth: CW * 0.38 },
+          1: { cellWidth: CW * 0.16 },
+          2: { cellWidth: CW * 0.13, halign: 'center' },
+          3: { cellWidth: CW * 0.15, halign: 'right' },
+          4: { cellWidth: CW * 0.18, halign: 'right', fontStyle: 'bold' },
+        },
+        didParseCell(data) {
+          // Style the "Daily Log" group header rows
+          if (Array.isArray(data.row.raw) && data.row.raw.length === 1 && typeof data.row.raw[0] === 'object' && 'colSpan' in data.row.raw[0]) {
+            data.cell.styles.fillColor = [239, 246, 255];
+            data.cell.styles.textColor = BRAND;
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.fontSize  = 7.5;
+          }
+        },
+      });
+
+      // ── Totals ───────────────────────────────────────────────────────
+      const pdfWithTable = pdf as unknown as { lastAutoTable: { finalY: number } };
+      const finalY = pdfWithTable.lastAutoTable.finalY + 16;
+      const totW = 200;
+      const totX = PW - M - totW;
+
+      pdf.setFillColor(...LIGHT);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.roundedRect(totX, finalY, totW, 80, 4, 4, 'FD');
+
+      const totals = [
+        ['Labor Subtotal',     `$${laborTotal.toFixed(2)}`],
+        ['Equipment Subtotal', `$${equipmentTotal.toFixed(2)}`],
+        ['Materials Subtotal', `$${materialTotal.toFixed(2)}`],
+      ];
+      totals.forEach(([label, val], i) => {
+        const ty = finalY + 12 + i * 14;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...GRAY);
+        pdf.text(label, totX + 10, ty);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(...DARK);
+        pdf.text(val, totX + totW - 10, ty, { align: 'right' });
+      });
+      // Divider
+      pdf.setDrawColor(226, 232, 240);
+      pdf.line(totX + 6, finalY + 52, totX + totW - 6, finalY + 52);
+      // Grand total
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(...DARK);
+      pdf.text('Total Due', totX + 10, finalY + 66);
+      pdf.setFontSize(14);
+      pdf.setTextColor(...BRAND);
+      pdf.text(`$${grandTotal.toFixed(2)}`, totX + totW - 10, finalY + 66, { align: 'right' });
+
+      // ── Footer ───────────────────────────────────────────────────────
+      // totals box ends at finalY + 80; footer needs ~80pt of space
+      const totalsEndY = finalY + 80;
+      const needsNewPage = totalsEndY + 100 > PH - 40;
+      if (needsNewPage) {
+        pdf.addPage();
+      }
+      const footerStart = needsNewPage ? 40 : totalsEndY + 20;
+
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.line(M, footerStart, PW - M, footerStart);
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text('PAYMENT TERMS', M, footerStart + 12);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(...DARK);
+      pdf.text(company.paymentTerms || 'Net 30', M, footerStart + 24);
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text(`Please include invoice number ${invoiceDetails.invoiceNumber} on all payments.`, M, footerStart + 36);
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text('MAKE CHECKS PAYABLE TO:', PW - M, footerStart + 12, { align: 'right' });
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(...DARK);
+      pdf.text(company.name || '', PW - M, footerStart + 24, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(...GRAY);
+      const remitLines = [[company.address, company.city].filter(Boolean).join(', '), company.email].filter(Boolean);
+      remitLines.forEach((line, i) => pdf.text(line, PW - M, footerStart + 36 + i * 10, { align: 'right' }));
+
+      // Thank you note
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(203, 213, 225);
+      pdf.text('THANK YOU FOR YOUR BUSINESS!', PW / 2, footerStart + 58, { align: 'center' });
+
+      // Brand accent bar (bottom)
+      const lastPage = pdf.internal.pages.length - 1;
+      pdf.setPage(lastPage);
+      pdf.setFillColor(...BRAND);
+      pdf.rect(0, PH - 8, PW, 8, 'F');
+
+      // ── Download ─────────────────────────────────────────────────────
+      const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
       const pdfBlob = pdf.output('blob');
       const blobUrl = URL.createObjectURL(pdfBlob);
       const link = document.createElement('a');
@@ -1245,7 +1502,6 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      // Revoke after a short delay to allow the download to start
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
     } catch (err) {
       console.error('PDF export failed:', err);
@@ -1338,7 +1594,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
         )}
 
         {/* ===================== INVOICE DOCUMENT ===================== */}
-        <div ref={invoiceRef} className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
+        <div className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
 
           {/* Color Bar */}
           <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
