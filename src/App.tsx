@@ -1174,6 +1174,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
   const [isEditingSettings, setIsEditingSettings] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState('');
 
   const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
   const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
@@ -1198,6 +1199,24 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   const handleExportPdf = async () => {
     if (isExportingPdf) return;
     setIsExportingPdf(true);
+    setPdfError('');
+
+    // Open a blank window IMMEDIATELY — while we're still in the user-gesture
+    // context.  iOS Safari and Android Chrome both block window.open() that
+    // happens inside an async callback after an await, so we grab the handle
+    // here (synchronous) and navigate it to the PDF once it's ready.
+    const pdfWindow = window.open('about:blank', '_blank');
+    if (pdfWindow) {
+      // Populate the loading screen using DOM methods (avoids document.write).
+      const doc = pdfWindow.document;
+      doc.title = 'Invoice';
+      const body = doc.body;
+      body.style.cssText = 'margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;font-size:1.1rem;color:#64748b;background:#f8fafc;';
+      const msg = doc.createElement('p');
+      msg.textContent = 'Generating PDF\u2026';
+      body.appendChild(msg);
+    }
+
     try {
       const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
         import('jspdf'),
@@ -1495,16 +1514,33 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
       const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
       const pdfBlob = pdf.output('blob');
       const blobUrl = URL.createObjectURL(pdfBlob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = fileName;
-      link.type = 'application/pdf';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+
+      if (pdfWindow && !pdfWindow.closed) {
+        // Navigate the pre-opened window to the PDF blob URL.
+        // • iOS Safari  → opens the PDF viewer; Share Sheet lets user save/share
+        // • Android     → opens PDF in Chrome PDF viewer (download from menu)
+        // • Desktop     → opens PDF in browser PDF viewer or prompts download
+        pdfWindow.location.href = blobUrl;
+      } else {
+        // Popup was blocked — fall back to a hidden <a download> click.
+        // Works on Android Chrome and desktop browsers.
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // Revoke the blob URL after enough time for the viewer/download to start.
+      // 30 s is generous: iOS Share Sheet and Android download manager both
+      // read the blob well within this window.
+      const BLOB_CLEANUP_MS = 30_000;
+      setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_CLEANUP_MS);
     } catch (err) {
+      if (pdfWindow && !pdfWindow.closed) pdfWindow.close();
       console.error('PDF export failed:', err);
+      setPdfError('Could not generate PDF. Please try again.');
     } finally {
       setIsExportingPdf(false);
     }
@@ -1538,6 +1574,14 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
             <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100">Close</button>
           </div>
         </div>
+
+        {/* PDF error banner */}
+        {pdfError && (
+          <div className="mb-4 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-medium print:hidden">
+            <span>{pdfError}</span>
+            <button onClick={() => setPdfError('')} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+          </div>
+        )}
 
         {/* Editable Invoice Settings Panel */}
         {isEditingSettings && (
