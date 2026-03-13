@@ -1173,6 +1173,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   const [customer, setCustomer] = useState<CustomerDetails>(() => loadCustomerDetails(job.id!));
   const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
   const [isEditingSettings, setIsEditingSettings] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const invoiceRef = useRef<HTMLDivElement>(null);
 
   const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
   const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
@@ -1194,6 +1196,64 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
     return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   };
 
+  const handleExportPdf = async () => {
+    if (!invoiceRef.current || isExportingPdf) return;
+    setIsExportingPdf(true);
+    try {
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf'),
+      ]);
+
+      const element = invoiceRef.current;
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'pt',
+        format: 'a4',
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const imgWidth = pageWidth;
+      const imgHeight = (canvas.height * pageWidth) / canvas.width;
+
+      // If content is taller than one page, split into multiple pages
+      let yOffset = 0;
+      while (yOffset < imgHeight) {
+        if (yOffset > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, -yOffset, imgWidth, imgHeight);
+        yOffset += pageHeight;
+      }
+
+      const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
+
+      // Use blob URL to trigger native download/open on mobile
+      const pdfBlob = pdf.output('blob');
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = fileName;
+      link.type = 'application/pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      // Revoke after a short delay to allow the download to start
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch (err) {
+      console.error('PDF export failed:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 overflow-y-auto">
       <div className="w-full max-w-5xl mx-auto py-8 px-4">
@@ -1208,7 +1268,15 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
             >
               <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Settings' : 'Edit Details'}
             </button>
-            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2">
+            <button
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 disabled:opacity-60"
+            >
+              <Download className="w-5 h-5" />
+              {isExportingPdf ? 'Generating…' : 'Download PDF'}
+            </button>
+            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 print:hidden">
               <Printer className="w-5 h-5" /> Print
             </button>
             <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100">Close</button>
@@ -1270,7 +1338,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
         )}
 
         {/* ===================== INVOICE DOCUMENT ===================== */}
-        <div className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
+        <div ref={invoiceRef} className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
 
           {/* Color Bar */}
           <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
