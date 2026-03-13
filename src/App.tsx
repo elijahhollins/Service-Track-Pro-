@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Briefcase, 
   Calendar, 
@@ -19,11 +19,82 @@ import {
   Search,
   X,
   MoreVertical,
-  Filter
+  Filter,
+  Building2,
+  Upload,
+  Phone,
+  Mail,
+  MapPin,
+  Globe,
+  Edit3,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, CompanySettings, CustomerDetails, InvoiceDetails } from './types';
 import { supabase } from './supabase';
+
+// --- LocalStorage Helpers ---
+const COMPANY_SETTINGS_KEY = 'stp_company_settings';
+const customerDetailsKey = (jobId: string | number) => `stp_customer_${jobId}`;
+const invoiceDetailsKey = (jobId: string | number) => `stp_invoice_${jobId}`;
+
+const defaultCompanySettings: CompanySettings = {
+  name: 'Service Track Pro',
+  address: '123 Service Way',
+  city: 'Springfield, ST 55555',
+  phone: '(555) 123-4567',
+  email: 'billing@servicetrackpro.com',
+  website: 'www.servicetrackpro.com',
+  logo: '',
+  paymentTerms: 'Payment is due within 30 days of invoice date.',
+};
+
+function loadCompanySettings(): CompanySettings {
+  try {
+    const raw = localStorage.getItem(COMPANY_SETTINGS_KEY);
+    return raw ? { ...defaultCompanySettings, ...JSON.parse(raw) } : { ...defaultCompanySettings };
+  } catch {
+    return { ...defaultCompanySettings };
+  }
+}
+
+function saveCompanySettings(settings: CompanySettings) {
+  localStorage.setItem(COMPANY_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function loadCustomerDetails(jobId: string | number): CustomerDetails {
+  try {
+    const raw = localStorage.getItem(customerDetailsKey(jobId));
+    return raw ? JSON.parse(raw) : { phone: '', email: '', billToAddress: '' };
+  } catch {
+    return { phone: '', email: '', billToAddress: '' };
+  }
+}
+
+function saveCustomerDetails(jobId: string | number, details: CustomerDetails) {
+  localStorage.setItem(customerDetailsKey(jobId), JSON.stringify(details));
+}
+
+function loadInvoiceDetails(jobId: string | number, job: Job): InvoiceDetails {
+  try {
+    const raw = localStorage.getItem(invoiceDetailsKey(jobId));
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  const today = new Date();
+  const dueDate = new Date(today);
+  dueDate.setDate(dueDate.getDate() + 30);
+  return {
+    invoiceNumber: `INV-${job.job_number || jobId}`,
+    invoiceDate: today.toISOString().split('T')[0],
+    dueDate: dueDate.toISOString().split('T')[0],
+    dateOfOrder: job.start_date || today.toISOString().split('T')[0],
+    jobLocation: job.address || '',
+  };
+}
+
+function saveInvoiceDetails(jobId: string | number, details: InvoiceDetails) {
+  localStorage.setItem(invoiceDetailsKey(jobId), JSON.stringify(details));
+}
 
 // --- Components ---
 
@@ -268,6 +339,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     status: 'active',
     foreman_id: undefined
   });
+  const [newCustomer, setNewCustomer] = useState<CustomerDetails>({ phone: '', email: '', billToAddress: '' });
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -304,6 +376,10 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
       .single();
       
     if (!error && data) {
+      // Save customer contact details to localStorage
+      if (newCustomer.phone || newCustomer.email || newCustomer.billToAddress) {
+        saveCustomerDetails(data.id, newCustomer);
+      }
       onSelectJob(data.id);
     }
   };
@@ -471,6 +547,43 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                     </div>
                   </div>
                 </div>
+
+                {/* Customer Contact Details */}
+                <div className="space-y-4 pt-4 border-t border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact Details</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Phone</label>
+                      <input 
+                        type="tel"
+                        className="input-field" 
+                        placeholder="(555) 000-0000"
+                        value={newCustomer.phone}
+                        onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Email</label>
+                      <input 
+                        type="email"
+                        className="input-field" 
+                        placeholder="contact@company.com"
+                        value={newCustomer.email}
+                        onChange={e => setNewCustomer({...newCustomer, email: e.target.value})}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Billing Address (if different from site)</label>
+                      <input 
+                        className="input-field" 
+                        placeholder="PO Box / Billing address"
+                        value={newCustomer.billToAddress}
+                        onChange={e => setNewCustomer({...newCustomer, billToAddress: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="pt-4 flex gap-4">
                   <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1 py-4">Cancel</button>
                   <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20">Create Project</button>
@@ -610,7 +723,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                   </div>
                   <div>
                     <h4 className="font-bold text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
-                    <p className="text-xs text-slate-500 italic">{log.notes || 'No notes'}</p>
+                    {log.notes ? (
+                      <p className="text-sm text-slate-600 mt-0.5 max-w-lg">{log.notes}</p>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No description</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -794,8 +911,14 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
               <input type="date" className="input-field" value={date} onChange={e => setDate(e.target.value)} required />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Notes / Description</label>
-              <input className="input-field" placeholder="e.g. Completed trenching for main conduit run" value={notes} onChange={e => setNotes(e.target.value)} />
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Description / Notes</label>
+              <textarea 
+                className="input-field resize-none" 
+                rows={3}
+                placeholder="e.g. Completed trenching for main conduit run. Site conditions were good. Crew worked efficiently on the east side perimeter." 
+                value={notes} 
+                onChange={e => setNotes(e.target.value)} 
+              />
             </div>
           </div>
 
@@ -1043,135 +1166,337 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   materials: Material[],
   onClose: () => void 
 }) => {
+  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
+  const [customer, setCustomer] = useState<CustomerDetails>(() => loadCustomerDetails(job.id!));
+  const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
+  const [isEditingSettings, setIsEditingSettings] = useState(false);
+
   const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
   const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
   const materialTotal = job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * m.unitPrice), 0), 0) || 0;
   const grandTotal = laborTotal + equipmentTotal + materialTotal;
 
+  const billToAddress = customer.billToAddress || job.address;
+
+  const handleSaveSettings = () => {
+    saveCompanySettings(company);
+    saveCustomerDetails(job.id!, customer);
+    saveInvoiceDetails(job.id!, invoiceDetails);
+    setIsEditingSettings(false);
+  };
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 overflow-y-auto">
-      <div className="w-full max-w-4xl mx-auto py-12 px-4">
-        <div className="flex justify-between items-center mb-8 text-white">
+      <div className="w-full max-w-5xl mx-auto py-8 px-4">
+
+        {/* Toolbar */}
+        <div className="flex justify-between items-center mb-6 text-white print:hidden">
           <h3 className="text-2xl font-bold font-display">Invoice Preview</h3>
           <div className="flex gap-3">
-            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20">
+            <button
+              onClick={() => setIsEditingSettings(!isEditingSettings)}
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2"
+            >
+              <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Settings' : 'Edit Details'}
+            </button>
+            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2">
               <Printer className="w-5 h-5" /> Print
             </button>
             <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100">Close</button>
           </div>
         </div>
 
-        <div className="bg-white p-12 rounded-lg shadow-2xl text-slate-900 print:shadow-none print:p-0" id="invoice">
-          {/* Header */}
-          <div className="flex justify-between items-start border-b-2 border-slate-900 pb-8 mb-12">
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
-                  <Briefcase className="w-6 h-6 text-white" />
+        {/* Editable Invoice Settings Panel */}
+        {isEditingSettings && (
+          <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden print:hidden">
+            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+              <h4 className="font-bold text-slate-900 flex items-center gap-2"><Edit3 className="w-4 h-4 text-brand" /> Invoice & Customer Details</h4>
+              <button onClick={handleSaveSettings} className="btn-primary flex items-center gap-2 text-sm py-2">
+                <Save className="w-4 h-4" /> Save Details
+              </button>
+            </div>
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Invoice Details */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Invoice Details</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Number</label>
+                  <input className="input-field" value={invoiceDetails.invoiceNumber} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceNumber: e.target.value})} />
                 </div>
-                <h1 className="text-2xl font-black uppercase tracking-tighter font-display">Service Track Pro</h1>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Date</label>
+                  <input type="date" className="input-field" value={invoiceDetails.invoiceDate} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceDate: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Due Date</label>
+                  <input type="date" className="input-field" value={invoiceDetails.dueDate} onChange={e => setInvoiceDetails({...invoiceDetails, dueDate: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Date of Order</label>
+                  <input type="date" className="input-field" value={invoiceDetails.dateOfOrder} onChange={e => setInvoiceDetails({...invoiceDetails, dateOfOrder: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Job Location</label>
+                  <input className="input-field" placeholder="Job site location" value={invoiceDetails.jobLocation} onChange={e => setInvoiceDetails({...invoiceDetails, jobLocation: e.target.value})} />
+                </div>
               </div>
-              <p className="text-sm text-slate-500">123 Service Way, Industrial Park</p>
-              <p className="text-sm text-slate-500">Springfield, ST 55555</p>
-              <p className="text-sm text-slate-500">(555) 123-4567 • billing@servicetrackpro.com</p>
-            </div>
-            <div className="text-right">
-              <h2 className="text-5xl font-black text-slate-200 uppercase mb-4 font-display">Invoice</h2>
-              <p className="font-bold">Job #: {job.job_number}</p>
-              <p className="text-slate-500">Date: {new Date().toLocaleDateString()}</p>
-            </div>
-          </div>
-
-          {/* Customer Info */}
-          <div className="grid grid-cols-2 gap-12 mb-12">
-            <div>
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Bill To:</h4>
-              <p className="text-xl font-bold">{job.customer_name}</p>
-              <p className="text-slate-600">{job.address}</p>
-            </div>
-            <div>
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project:</h4>
-              <p className="text-xl font-bold">{job.job_name}</p>
-              <p className="text-slate-600">Status: {job.status}</p>
-            </div>
-          </div>
-
-          {/* Line Items */}
-          <div className="space-y-12 mb-12">
-            {job.logs?.map(log => (
-              <div key={log.id} className="border-t border-slate-100 pt-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h5 className="font-bold text-lg">{new Date(log.date).toLocaleDateString()} - Daily Log</h5>
-                  <p className="text-xs text-slate-400 italic">{log.notes}</p>
+              {/* Customer Details */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Phone</label>
+                  <input className="input-field" type="tel" placeholder="(555) 000-0000" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
                 </div>
-                
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Email</label>
+                  <input className="input-field" type="email" placeholder="contact@company.com" value={customer.email} onChange={e => setCustomer({...customer, email: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Billing Address (if different from site)</label>
+                  <input className="input-field" placeholder="Billing / PO address" value={customer.billToAddress} onChange={e => setCustomer({...customer, billToAddress: e.target.value})} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================== INVOICE DOCUMENT ===================== */}
+        <div className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
+
+          {/* Color Bar */}
+          <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
+
+          <div className="p-10">
+            {/* Header: Company + INVOICE */}
+            <div className="flex justify-between items-start mb-10">
+              {/* Company Info */}
+              <div className="flex items-start gap-4">
+                {company.logo ? (
+                  <img src={company.logo} alt="Company Logo" className="h-16 w-auto object-contain" />
+                ) : (
+                  <div className="w-14 h-14 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/20 flex-shrink-0">
+                    <Briefcase className="w-8 h-8 text-white" />
+                  </div>
+                )}
+                <div>
+                  <h1 className="text-2xl font-black uppercase tracking-tight font-display text-slate-900">{company.name}</h1>
+                  <p className="text-sm text-slate-500 mt-0.5">{company.address}</p>
+                  <p className="text-sm text-slate-500">{company.city}</p>
+                  <div className="flex flex-wrap gap-x-4 mt-1">
+                    {company.phone && <p className="text-sm text-slate-500">{company.phone}</p>}
+                    {company.email && <p className="text-sm text-slate-500">{company.email}</p>}
+                    {company.website && <p className="text-sm text-slate-500">{company.website}</p>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Invoice Title + Meta */}
+              <div className="text-right">
+                <h2 className="text-6xl font-black text-slate-100 uppercase tracking-tighter font-display leading-none mb-3">INVOICE</h2>
+                <div className="space-y-1 text-sm">
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Invoice #</span>
+                    <span className="font-bold text-slate-900 font-mono">{invoiceDetails.invoiceNumber}</span>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Invoice Date</span>
+                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.invoiceDate)}</span>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Due Date</span>
+                    <span className="font-semibold text-red-600">{formatDate(invoiceDetails.dueDate)}</span>
+                  </div>
+                  <div className="flex items-center justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Date of Order</span>
+                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.dateOfOrder)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-px bg-slate-200 mb-8" />
+
+            {/* Bill To + Project Info */}
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              {/* Bill To */}
+              <div className="col-span-1 bg-slate-50 rounded-xl p-5 border border-slate-100">
+                <p className="text-[10px] font-bold text-brand uppercase tracking-widest mb-3">Bill To</p>
+                <p className="text-lg font-bold text-slate-900 leading-tight">{job.customer_name}</p>
+                <p className="text-sm text-slate-600 mt-1">{billToAddress}</p>
+                {customer.phone && (
+                  <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400" />{customer.phone}</p>
+                )}
+                {customer.email && (
+                  <p className="text-sm text-slate-600 flex items-center gap-1.5"><Mail className="w-3 h-3 text-slate-400" />{customer.email}</p>
+                )}
+              </div>
+
+              {/* Project Details */}
+              <div className="col-span-2 grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project</p>
+                  <p className="font-bold text-slate-900">{job.job_name}</p>
+                  <span className={`inline-block mt-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${
+                    job.status === 'active' 
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-slate-100 text-slate-500 border-slate-200'
+                  }`}>{job.status}</span>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Number</p>
+                  <p className="font-bold font-mono text-slate-900">{job.job_number}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Location</p>
+                  <p className="text-sm text-slate-700 flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                    {invoiceDetails.jobLocation || job.address || '—'}
+                  </p>
+                </div>
+                <div className="bg-brand rounded-xl p-4 text-white">
+                  <p className="text-[10px] font-bold text-white/70 uppercase tracking-widest mb-2">Amount Due</p>
+                  <p className="text-2xl font-black font-mono">${grandTotal.toFixed(2)}</p>
+                  <p className="text-[10px] text-white/60 mt-1">Due {formatDate(invoiceDetails.dueDate)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Line Items */}
+            <div className="mb-8">
+              <div className="rounded-xl overflow-hidden border border-slate-200">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left border-b border-slate-200">
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400">Description</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-center">Qty/Hrs</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Rate</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Total</th>
+                    <tr className="bg-slate-900 text-white">
+                      <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Description</th>
+                      <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Date</th>
+                      <th className="px-5 py-3 text-center text-[10px] font-bold uppercase tracking-widest">Qty / Hrs</th>
+                      <th className="px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Rate</th>
+                      <th className="px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Total</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {log.data.employees.map((e, idx) => (
-                      <tr key={`emp-${idx}`}>
-                        <td className="py-2">Labor: {employees.find(emp => emp.id === e.employeeId)?.name}</td>
-                        <td className="py-2 text-center font-mono">{e.hours}h</td>
-                        <td className="py-2 text-right font-mono">${e.rate.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(e.hours * e.rate).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {log.data.equipment.map((e, idx) => (
-                      <tr key={`eq-${idx}`}>
-                        <td className="py-2">Equipment: {equipment.find(eq => eq.id === e.equipmentId)?.name}</td>
-                        <td className="py-2 text-center font-mono">{e.hours}h</td>
-                        <td className="py-2 text-right font-mono">${e.rate.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(e.hours * e.rate).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {log.data.materials.map((m, idx) => (
-                      <tr key={`mat-${idx}`}>
-                        <td className="py-2">Material: {m.name}</td>
-                        <td className="py-2 text-center font-mono">{m.quantity}</td>
-                        <td className="py-2 text-right font-mono">${m.unitPrice.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(m.quantity * m.unitPrice).toFixed(2)}</td>
-                      </tr>
-                    ))}
+                  <tbody>
+                    {job.logs?.map((log, logIdx) => {
+                      const rows: React.ReactNode[] = [];
+                      const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      if (log.notes) {
+                        rows.push(
+                          <tr key={`desc-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
+                            <td colSpan={5} className="px-5 pt-4 pb-1">
+                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest mr-2">Daily Log #{logIdx + 1}</span>
+                              <span className="text-xs text-slate-500 italic">{log.notes}</span>
+                            </td>
+                          </tr>
+                        );
+                      } else {
+                        rows.push(
+                          <tr key={`header-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
+                            <td colSpan={5} className="px-5 pt-4 pb-1">
+                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest">Daily Log #{logIdx + 1}</span>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      log.data.employees.forEach((e, idx) => {
+                        const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+                        rows.push(
+                          <tr key={`emp-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700">
+                              <span className="font-medium">Labor — </span>{empName}
+                              <span className="ml-2 text-[10px] text-slate-400 uppercase font-bold tracking-wider">{employees.find(emp => emp.id === e.employeeId)?.role}</span>
+                            </td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      log.data.equipment.forEach((e, idx) => {
+                        const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+                        rows.push(
+                          <tr key={`eq-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Equipment — </span>{eqName}</td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      log.data.materials.forEach((m, idx) => {
+                        rows.push(
+                          <tr key={`mat-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Material — </span>{m.name}</td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{m.quantity} units</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${m.unitPrice.toFixed(2)}/unit</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(m.quantity * m.unitPrice).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      return rows;
+                    })}
                   </tbody>
                 </table>
               </div>
-            ))}
-          </div>
+            </div>
 
-          {/* Totals */}
-          <div className="flex justify-end pt-12 border-t-2 border-slate-900">
-            <div className="w-64 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Labor Total:</span>
-                <span className="font-mono font-bold">${laborTotal.toFixed(2)}</span>
+            {/* Totals */}
+            <div className="flex justify-end mb-8">
+              <div className="w-72 space-y-2 bg-slate-50 rounded-xl p-5 border border-slate-100">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Labor Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${laborTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Equipment Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${equipmentTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Materials Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${materialTotal.toFixed(2)}</span>
+                </div>
+                <div className="h-px bg-slate-200 my-2" />
+                <div className="flex justify-between items-center">
+                  <span className="text-base font-black uppercase tracking-tight text-slate-900">Total Due</span>
+                  <span className="text-2xl font-black font-mono text-brand">${grandTotal.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Equipment Total:</span>
-                <span className="font-mono font-bold">${equipmentTotal.toFixed(2)}</span>
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-slate-200 pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Payment Terms</p>
+                <p className="text-sm text-slate-600">{company.paymentTerms}</p>
+                <p className="text-xs text-slate-400 mt-1">Please include invoice number <strong className="text-slate-600">{invoiceDetails.invoiceNumber}</strong> on all payments.</p>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Material Total:</span>
-                <span className="font-mono font-bold">${materialTotal.toFixed(2)}</span>
+              <div className="md:text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Make checks payable to:</p>
+                <p className="text-sm font-bold text-slate-900">{company.name}</p>
+                <p className="text-xs text-slate-500">{company.address}, {company.city}</p>
+                {company.email && <p className="text-xs text-slate-500">{company.email}</p>}
               </div>
-              <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
-                <span className="text-lg font-black uppercase tracking-tighter">Grand Total:</span>
-                <span className="text-2xl font-black font-mono">${grandTotal.toFixed(2)}</span>
-              </div>
+            </div>
+
+            <div className="mt-6 text-center">
+              <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Thank you for your business!</p>
             </div>
           </div>
 
-          {/* Footer */}
-          <div className="mt-24 pt-12 border-t border-slate-100 text-center">
-            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Thank you for your business</p>
-            <p className="text-[10px] text-slate-300 mt-2 italic">Payment is due within 30 days. Please include job number on all correspondence.</p>
-          </div>
+          {/* Bottom Color Bar */}
+          <div className="h-2 bg-brand rounded-b-lg print:rounded-none" />
         </div>
       </div>
     </div>
@@ -1191,6 +1516,11 @@ const Settings = () => {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
+
+  // Company Settings
+  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
+  const [companySaved, setCompanySaved] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAll = async () => {
     const [empRes, eqRes, matRes, tempRes] = await Promise.all([
@@ -1238,6 +1568,23 @@ const Settings = () => {
     fetchAll();
   };
 
+  const handleSaveCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveCompanySettings(company);
+    setCompanySaved(true);
+    setTimeout(() => setCompanySaved(false), 2500);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCompany(prev => ({ ...prev, logo: reader.result as string }));
+    };
+    reader.readAsDataURL(file);
+  };
+
   const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
   const filteredEquipment = equipment.filter(e => e.name.toLowerCase().includes(searchEquipment.toLowerCase()));
   const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchMaterials.toLowerCase()));
@@ -1247,7 +1594,7 @@ const Settings = () => {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
-          <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
+          <p className="text-slate-500 mt-1">Manage company info, employees, equipment, and materials.</p>
         </div>
         <div className="flex gap-3">
           <div className="px-4 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-3 shadow-sm">
@@ -1256,6 +1603,141 @@ const Settings = () => {
           </div>
         </div>
       </header>
+
+      {/* Company Information */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
+            <Building2 className="w-5 h-5 text-brand" />
+          </div>
+          <div>
+            <h3 className="text-2xl font-bold text-slate-900 font-display">Company Information</h3>
+            <p className="text-sm text-slate-500">This information appears on your invoices.</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveCompany} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+            <p className="text-sm font-medium text-slate-600">Saved changes apply to all new invoices.</p>
+            <button
+              type="submit"
+              className={`btn-primary flex items-center gap-2 text-sm py-2 transition-all ${companySaved ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
+            >
+              {companySaved ? <><Check className="w-4 h-4" /> Saved!</> : <><Save className="w-4 h-4" /> Save Company Info</>}
+            </button>
+          </div>
+
+          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Logo Upload */}
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Company Logo</label>
+              <div className="flex items-center gap-6">
+                <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-50 overflow-hidden flex-shrink-0">
+                  {company.logo ? (
+                    <img src={company.logo} alt="Logo" className="w-full h-full object-contain p-2" />
+                  ) : (
+                    <Building2 className="w-10 h-10 text-slate-300" />
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    className="btn-secondary flex items-center gap-2 text-sm"
+                  >
+                    <Upload className="w-4 h-4" /> Upload Logo
+                  </button>
+                  {company.logo && (
+                    <button
+                      type="button"
+                      onClick={() => setCompany(prev => ({ ...prev, logo: '' }))}
+                      className="text-xs text-red-500 hover:underline block"
+                    >
+                      Remove logo
+                    </button>
+                  )}
+                  <p className="text-xs text-slate-400">PNG, JPG, SVG. Recommended: 300×100px</p>
+                </div>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                required
+                className="input-field"
+                placeholder="e.g. Acme Services LLC"
+                value={company.name}
+                onChange={e => setCompany({...company, name: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Website</label>
+              <input
+                className="input-field"
+                placeholder="www.yourcompany.com"
+                value={company.website}
+                onChange={e => setCompany({...company, website: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Street Address</label>
+              <input
+                className="input-field"
+                placeholder="123 Main Street"
+                value={company.address}
+                onChange={e => setCompany({...company, address: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">City, State, ZIP</label>
+              <input
+                className="input-field"
+                placeholder="Springfield, ST 55555"
+                value={company.city}
+                onChange={e => setCompany({...company, city: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Phone</label>
+              <input
+                type="tel"
+                className="input-field"
+                placeholder="(555) 123-4567"
+                value={company.phone}
+                onChange={e => setCompany({...company, phone: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+              <input
+                type="email"
+                className="input-field"
+                placeholder="billing@yourcompany.com"
+                value={company.email}
+                onChange={e => setCompany({...company, email: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Payment Terms (shown on invoice footer)</label>
+              <textarea
+                className="input-field resize-none"
+                rows={2}
+                placeholder="e.g. Payment is due within 30 days of invoice date."
+                value={company.paymentTerms}
+                onChange={e => setCompany({...company, paymentTerms: e.target.value})}
+              />
+            </div>
+          </div>
+        </form>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
         {/* Employees */}
