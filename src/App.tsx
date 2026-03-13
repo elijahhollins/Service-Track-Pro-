@@ -380,6 +380,9 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
       if (newCustomer.phone || newCustomer.email || newCustomer.billToAddress) {
         saveCustomerDetails(data.id, newCustomer);
       }
+      // Reset form state
+      setNewCustomer({ phone: '', email: '', billToAddress: '' });
+      setIsAdding(false);
       onSelectJob(data.id);
     }
   };
@@ -1520,6 +1523,7 @@ const Settings = () => {
   // Company Settings
   const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
   const [companySaved, setCompanySaved] = useState(false);
+  const [logoError, setLogoError] = useState('');
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAll = async () => {
@@ -1578,9 +1582,30 @@ const Settings = () => {
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setLogoError('Unsupported file type. Please upload a PNG, JPG, SVG, GIF, or WebP image.');
+      e.target.value = '';
+      return;
+    }
+
+    // Validate file size (max 2MB to stay within localStorage limits)
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setLogoError('Image is too large. Please upload an image under 2 MB.');
+      e.target.value = '';
+      return;
+    }
+
+    setLogoError('');
     const reader = new FileReader();
     reader.onload = () => {
       setCompany(prev => ({ ...prev, logo: reader.result as string }));
+    };
+    reader.onerror = () => {
+      setLogoError('Failed to read the image file. Please try again.');
     };
     reader.readAsDataURL(file);
   };
@@ -1656,7 +1681,8 @@ const Settings = () => {
                       Remove logo
                     </button>
                   )}
-                  <p className="text-xs text-slate-400">PNG, JPG, SVG. Recommended: 300×100px</p>
+                  <p className="text-xs text-slate-400">PNG, JPG, SVG, WebP. Max 2 MB. Recommended: 300×100px</p>
+                  {logoError && <p className="text-xs text-red-500 font-medium">{logoError}</p>}
                 </div>
                 <input
                   ref={logoInputRef}
