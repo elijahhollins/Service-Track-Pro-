@@ -57,3 +57,28 @@ export interface Template {
   name: string;
   data: WorkLogEntry;
 }
+
+export interface CompanySettings {
+  name: string;
+  address: string;
+  city: string;
+  phone: string;
+  email: string;
+  website: string;
+  logo: string;
+  paymentTerms: string;
+}
+
+export interface CustomerDetails {
+  phone: string;
+  email: string;
+  billToAddress: string;
+}
+
+export interface InvoiceDetails {
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  dateOfOrder: string;
+  jobLocation: string;
+}

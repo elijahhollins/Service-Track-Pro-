@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Briefcase, 
   Calendar, 
@@ -19,11 +19,82 @@ import {
   Search,
   X,
   MoreVertical,
-  Filter
+  Filter,
+  Building2,
+  Upload,
+  Phone,
+  Mail,
+  MapPin,
+  Globe,
+  Edit3,
+  Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, CompanySettings, CustomerDetails, InvoiceDetails } from './types';
 import { supabase } from './supabase';
+
+// --- LocalStorage Helpers ---
+const COMPANY_SETTINGS_KEY = 'stp_company_settings';
+const customerDetailsKey = (jobId: string | number) => `stp_customer_${jobId}`;
+const invoiceDetailsKey = (jobId: string | number) => `stp_invoice_${jobId}`;
+
+const defaultCompanySettings: CompanySettings = {
+  name: 'Service Track Pro',
+  address: '123 Service Way',
+  city: 'Springfield, ST 55555',
+  phone: '(555) 123-4567',
+  email: 'billing@servicetrackpro.com',
+  website: 'www.servicetrackpro.com',
+  logo: '',
+  paymentTerms: 'Payment is due within 30 days of invoice date.',
+};
+
+function loadCompanySettings(): CompanySettings {
+  try {
+    const raw = localStorage.getItem(COMPANY_SETTINGS_KEY);
+    return raw ? { ...defaultCompanySettings, ...JSON.parse(raw) } : { ...defaultCompanySettings };
+  } catch {
+    return { ...defaultCompanySettings };
+  }
+}
+
+function saveCompanySettings(settings: CompanySettings) {
+  localStorage.setItem(COMPANY_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+function loadCustomerDetails(jobId: string | number): CustomerDetails {
+  try {
+    const raw = localStorage.getItem(customerDetailsKey(jobId));
+    return raw ? JSON.parse(raw) : { phone: '', email: '', billToAddress: '' };
+  } catch {
+    return { phone: '', email: '', billToAddress: '' };
+  }
+}
+
+function saveCustomerDetails(jobId: string | number, details: CustomerDetails) {
+  localStorage.setItem(customerDetailsKey(jobId), JSON.stringify(details));
+}
+
+function loadInvoiceDetails(jobId: string | number, job: Job): InvoiceDetails {
+  try {
+    const raw = localStorage.getItem(invoiceDetailsKey(jobId));
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  const today = new Date();
+  const dueDate = new Date(today);
+  dueDate.setDate(dueDate.getDate() + 30);
+  return {
+    invoiceNumber: `INV-${job.job_number || jobId}`,
+    invoiceDate: today.toISOString().split('T')[0],
+    dueDate: dueDate.toISOString().split('T')[0],
+    dateOfOrder: job.start_date || today.toISOString().split('T')[0],
+    jobLocation: job.address || '',
+  };
+}
+
+function saveInvoiceDetails(jobId: string | number, details: InvoiceDetails) {
+  localStorage.setItem(invoiceDetailsKey(jobId), JSON.stringify(details));
+}
 
 // --- Components ---
 
@@ -268,6 +339,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     status: 'active',
     foreman_id: undefined
   });
+  const [newCustomer, setNewCustomer] = useState<CustomerDetails>({ phone: '', email: '', billToAddress: '' });
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -304,6 +376,13 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
       .single();
       
     if (!error && data) {
+      // Save customer contact details to localStorage
+      if (newCustomer.phone || newCustomer.email || newCustomer.billToAddress) {
+        saveCustomerDetails(data.id, newCustomer);
+      }
+      // Reset form state
+      setNewCustomer({ phone: '', email: '', billToAddress: '' });
+      setIsAdding(false);
       onSelectJob(data.id);
     }
   };
@@ -471,6 +550,43 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                     </div>
                   </div>
                 </div>
+
+                {/* Customer Contact Details */}
+                <div className="space-y-4 pt-4 border-t border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact Details</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Phone</label>
+                      <input 
+                        type="tel"
+                        className="input-field" 
+                        placeholder="(555) 000-0000"
+                        value={newCustomer.phone}
+                        onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Email</label>
+                      <input 
+                        type="email"
+                        className="input-field" 
+                        placeholder="contact@company.com"
+                        value={newCustomer.email}
+                        onChange={e => setNewCustomer({...newCustomer, email: e.target.value})}
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Billing Address (if different from site)</label>
+                      <input 
+                        className="input-field" 
+                        placeholder="PO Box / Billing address"
+                        value={newCustomer.billToAddress}
+                        onChange={e => setNewCustomer({...newCustomer, billToAddress: e.target.value})}
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="pt-4 flex gap-4">
                   <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1 py-4">Cancel</button>
                   <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20">Create Project</button>
@@ -610,7 +726,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                   </div>
                   <div>
                     <h4 className="font-bold text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
-                    <p className="text-xs text-slate-500 italic">{log.notes || 'No notes'}</p>
+                    {log.notes ? (
+                      <p className="text-sm text-slate-600 mt-0.5 max-w-lg">{log.notes}</p>
+                    ) : (
+                      <p className="text-xs text-slate-400 italic">No description</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -794,8 +914,14 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
               <input type="date" className="input-field" value={date} onChange={e => setDate(e.target.value)} required />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Notes / Description</label>
-              <input className="input-field" placeholder="e.g. Completed trenching for main conduit run" value={notes} onChange={e => setNotes(e.target.value)} />
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Description / Notes</label>
+              <textarea 
+                className="input-field resize-none" 
+                rows={3}
+                placeholder="e.g. Completed trenching for main conduit run. Site conditions were good. Crew worked efficiently on the east side perimeter." 
+                value={notes} 
+                onChange={e => setNotes(e.target.value)} 
+              />
             </div>
           </div>
 
@@ -1043,135 +1169,704 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   materials: Material[],
   onClose: () => void 
 }) => {
+  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
+  const [customer, setCustomer] = useState<CustomerDetails>(() => loadCustomerDetails(job.id!));
+  const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
+  const [isEditingSettings, setIsEditingSettings] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState('');
+
   const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
   const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
   const materialTotal = job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * m.unitPrice), 0), 0) || 0;
   const grandTotal = laborTotal + equipmentTotal + materialTotal;
 
+  const billToAddress = customer.billToAddress || job.address;
+
+  const handleSaveSettings = () => {
+    saveCompanySettings(company);
+    saveCustomerDetails(job.id!, customer);
+    saveInvoiceDetails(job.id!, invoiceDetails);
+    setIsEditingSettings(false);
+  };
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  };
+
+  const handleExportPdf = async () => {
+    if (isExportingPdf) return;
+    setIsExportingPdf(true);
+    setPdfError('');
+
+    // Open a blank window IMMEDIATELY — while we're still in the user-gesture
+    // context.  iOS Safari and Android Chrome both block window.open() that
+    // happens inside an async callback after an await, so we grab the handle
+    // here (synchronous) and navigate it to the PDF once it's ready.
+    const pdfWindow = window.open('about:blank', '_blank');
+    if (pdfWindow) {
+      // Populate the loading screen using DOM methods (avoids document.write).
+      const doc = pdfWindow.document;
+      doc.title = 'Invoice';
+      const body = doc.body;
+      body.style.cssText = 'margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;font-size:1.1rem;color:#64748b;background:#f8fafc;';
+      const msg = doc.createElement('p');
+      msg.textContent = 'Generating PDF\u2026';
+      body.appendChild(msg);
+    }
+
+    try {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ]);
+
+      const BRAND = [59, 130, 246] as [number, number, number];
+      const DARK  = [15, 23, 42]  as [number, number, number];
+      const GRAY  = [100, 116, 139] as [number, number, number];
+      const LIGHT = [248, 250, 252] as [number, number, number];
+      const WHITE = [255, 255, 255] as [number, number, number];
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const PW = pdf.internal.pageSize.getWidth();   // 595
+      const PH = pdf.internal.pageSize.getHeight();  // 842
+      const M  = 40; // margin
+      const CW = PW - M * 2; // content width
+
+      // ── Brand accent bar (top) ──────────────────────────────────────
+      pdf.setFillColor(...BRAND);
+      pdf.rect(0, 0, PW, 8, 'F');
+
+      // ── Company section (left) ──────────────────────────────────────
+      let y = 32;
+      const cLines = [company.address, company.city, company.phone, company.email, company.website].filter(Boolean) as string[];
+      // Logo (base64 image) if present
+      if (company.logo) {
+        try {
+          const ext = company.logo.startsWith('data:image/png') ? 'PNG'
+                    : company.logo.startsWith('data:image/svg') ? 'SVG'
+                    : 'JPEG';
+          pdf.addImage(company.logo, ext, M, y, 50, 50, undefined, 'FAST');
+          // company text to the right of logo
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(14);
+          pdf.setTextColor(...DARK);
+          pdf.text(company.name || 'Company Name', M + 58, y + 14);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...GRAY);
+          cLines.forEach((line, i) => pdf.text(line, M + 58, y + 26 + i * 10));
+        } catch {
+          // Logo failed — fall back to text-only
+          pdf.setFont('helvetica', 'bold');
+          pdf.setFontSize(14);
+          pdf.setTextColor(...DARK);
+          pdf.text(company.name || 'Company Name', M, y + 10);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...GRAY);
+          cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
+        }
+      } else {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(14);
+        pdf.setTextColor(...DARK);
+        pdf.text(company.name || 'Company Name', M, y + 10);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...GRAY);
+        cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
+      }
+
+      // ── INVOICE title + meta (right) ─────────────────────────────────
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(36);
+      pdf.setTextColor(220, 226, 236);
+      pdf.text('INVOICE', PW - M, y + 28, { align: 'right' });
+
+      pdf.setFontSize(8);
+      const metaLeft  = PW - M - 130;
+      const metaRight = PW - M;
+      const metaRows = [
+        ['Invoice #',    invoiceDetails.invoiceNumber || '—'],
+        ['Invoice Date', formatDate(invoiceDetails.invoiceDate)],
+        ['Due Date',     formatDate(invoiceDetails.dueDate)],
+        ['Date of Order',formatDate(invoiceDetails.dateOfOrder)],
+      ];
+      metaRows.forEach(([label, value], i) => {
+        const ry = y + 44 + i * 12;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(...GRAY);
+        pdf.text(label, metaLeft, ry, { align: 'left' });
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(...DARK);
+        pdf.text(value, metaRight, ry, { align: 'right' });
+      });
+
+      // ── Horizontal rule ─────────────────────────────────────────────
+      y += 100;
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.line(M, y, PW - M, y);
+      y += 14;
+
+      // ── Bill To + Project grid ───────────────────────────────────────
+      const colW = CW / 4;
+      const boxH = 68;
+      const boxPad = 8;
+      const labelFontSize = 7;
+      const valueFontSize = 9;
+      const boxes = [
+        { title: 'Bill To',      lines: [job.customer_name, billToAddress, customer.phone, customer.email].filter(Boolean) as string[] },
+        { title: 'Project',      lines: [job.job_name, `Status: ${job.status}`] },
+        { title: 'Job Number',   lines: [job.job_number] },
+        { title: 'Job Location', lines: [invoiceDetails.jobLocation || job.address || '—'] },
+      ];
+
+      boxes.forEach((box, i) => {
+        const bx = M + i * colW;
+        const by = y;
+        pdf.setFillColor(...LIGHT);
+        pdf.setDrawColor(226, 232, 240);
+        pdf.setLineWidth(0.5);
+        pdf.roundedRect(bx, by, colW - 4, boxH, 4, 4, 'FD');
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(labelFontSize);
+        pdf.setTextColor(...BRAND);
+        pdf.text(box.title.toUpperCase(), bx + boxPad, by + boxPad + 6);
+
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(valueFontSize);
+        pdf.setTextColor(...DARK);
+        box.lines.slice(0, 4).forEach((line, li) => {
+          const displayLine = pdf.splitTextToSize(line, colW - boxPad * 2 - 4)[0];
+          pdf.text(displayLine, bx + boxPad, by + boxPad + 18 + li * 11);
+        });
+      });
+
+      // Amount Due box (replaces last box — full right column)
+      const adX = M + 3 * colW;
+      const adY = y;
+      pdf.setFillColor(...BRAND);
+      pdf.roundedRect(adX, adY, colW - 4, boxH, 4, 4, 'F');
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(255, 255, 255);
+      pdf.text('AMOUNT DUE', adX + boxPad, adY + boxPad + 6);
+      pdf.setFontSize(18);
+      pdf.text(`$${grandTotal.toFixed(2)}`, adX + boxPad, adY + boxPad + 26);
+      pdf.setFontSize(7);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(200, 220, 255);
+      pdf.text(`Due ${formatDate(invoiceDetails.dueDate)}`, adX + boxPad, adY + boxPad + 40);
+
+      y += boxH + 18;
+
+      // ── Line Items Table ────────────────────────────────────────────
+      const tableBody: (string | { content: string; colSpan?: number; styles?: object })[][] = [];
+
+      (job.logs || []).forEach((log, logIdx) => {
+        const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const headerLabel = `Daily Log #${logIdx + 1}${log.notes ? `  —  ${log.notes}` : ''}`;
+        tableBody.push([
+          { content: headerLabel, colSpan: 5, styles: { fillColor: [239, 246, 255], textColor: BRAND, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 5, bottom: 5, left: 8, right: 8 } } },
+        ]);
+
+        log.data.employees.forEach((e) => {
+          const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+          const role    = employees.find(emp => emp.id === e.employeeId)?.role || '';
+          tableBody.push([
+            `Labor — ${empName}${role ? `  (${role})` : ''}`,
+            logDate,
+            `${e.hours}h`,
+            `$${e.rate.toFixed(2)}/hr`,
+            `$${(e.hours * e.rate).toFixed(2)}`,
+          ]);
+        });
+        log.data.equipment.forEach((e) => {
+          const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+          tableBody.push([`Equipment — ${eqName}`, logDate, `${e.hours}h`, `$${e.rate.toFixed(2)}/hr`, `$${(e.hours * e.rate).toFixed(2)}`]);
+        });
+        log.data.materials.forEach((m) => {
+          tableBody.push([`Material — ${m.name}`, logDate, `${m.quantity} units`, `$${m.unitPrice.toFixed(2)}/unit`, `$${(m.quantity * m.unitPrice).toFixed(2)}`]);
+        });
+      });
+
+      // Reserve 210pt at the bottom so totals + footer always fit on the same
+      // page as the last table row (totals≈100pt + footer≈80pt + brand bar≈30pt).
+      autoTable(pdf, {
+        startY: y,
+        margin: { left: M, right: M, bottom: 210 },
+        head: [['Description', 'Date', 'Qty / Hrs', 'Rate', 'Total']],
+        body: tableBody,
+        styles: { font: 'helvetica', fontSize: 8, cellPadding: 5, textColor: DARK, lineColor: [226, 232, 240], lineWidth: 0.3 },
+        headStyles: { fillColor: DARK, textColor: WHITE, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 6, bottom: 6, left: 5, right: 5 } },
+        alternateRowStyles: { fillColor: LIGHT },
+        columnStyles: {
+          0: { cellWidth: CW * 0.38 },
+          1: { cellWidth: CW * 0.16 },
+          2: { cellWidth: CW * 0.13, halign: 'center' },
+          3: { cellWidth: CW * 0.15, halign: 'right' },
+          4: { cellWidth: CW * 0.18, halign: 'right', fontStyle: 'bold' },
+        },
+        didParseCell(data) {
+          // Style the "Daily Log" group header rows
+          if (Array.isArray(data.row.raw) && data.row.raw.length === 1 && typeof data.row.raw[0] === 'object' && 'colSpan' in data.row.raw[0]) {
+            data.cell.styles.fillColor = [239, 246, 255];
+            data.cell.styles.textColor = BRAND;
+            data.cell.styles.fontStyle = 'bold';
+            data.cell.styles.fontSize  = 7.5;
+          }
+        },
+      });
+
+      // ── Totals ───────────────────────────────────────────────────────
+      const pdfWithTable = pdf as unknown as { lastAutoTable: { finalY: number } };
+      const finalY = pdfWithTable.lastAutoTable.finalY + 16;
+      const totW = 200;
+      const totX = PW - M - totW;
+
+      pdf.setFillColor(...LIGHT);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.roundedRect(totX, finalY, totW, 80, 4, 4, 'FD');
+
+      const totals = [
+        ['Labor Subtotal',     `$${laborTotal.toFixed(2)}`],
+        ['Equipment Subtotal', `$${equipmentTotal.toFixed(2)}`],
+        ['Materials Subtotal', `$${materialTotal.toFixed(2)}`],
+      ];
+      totals.forEach(([label, val], i) => {
+        const ty = finalY + 12 + i * 14;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        pdf.setTextColor(...GRAY);
+        pdf.text(label, totX + 10, ty);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(...DARK);
+        pdf.text(val, totX + totW - 10, ty, { align: 'right' });
+      });
+      // Divider
+      pdf.setDrawColor(226, 232, 240);
+      pdf.line(totX + 6, finalY + 52, totX + totW - 6, finalY + 52);
+      // Grand total
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(...DARK);
+      pdf.text('Total Due', totX + 10, finalY + 66);
+      pdf.setFontSize(14);
+      pdf.setTextColor(...BRAND);
+      pdf.text(`$${grandTotal.toFixed(2)}`, totX + totW - 10, finalY + 66, { align: 'right' });
+
+      // ── Footer ───────────────────────────────────────────────────────
+      // autoTable's margin.bottom=210 guarantees at least 210 pt of space
+      // below the last table row, so totals + footer always sit on the same
+      // page without an extra page break.
+      const totalsEndY = finalY + 80;
+      const footerStart = totalsEndY + 20;
+
+      pdf.setDrawColor(226, 232, 240);
+      pdf.setLineWidth(0.5);
+      pdf.line(M, footerStart, PW - M, footerStart);
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text('PAYMENT TERMS', M, footerStart + 12);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(...DARK);
+      pdf.text(company.paymentTerms || 'Net 30', M, footerStart + 24);
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text(`Please include invoice number ${invoiceDetails.invoiceNumber} on all payments.`, M, footerStart + 36);
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(...GRAY);
+      pdf.text('MAKE CHECKS PAYABLE TO:', PW - M, footerStart + 12, { align: 'right' });
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(...DARK);
+      pdf.text(company.name || '', PW - M, footerStart + 24, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(...GRAY);
+      const remitLines = [[company.address, company.city].filter(Boolean).join(', '), company.email].filter(Boolean);
+      remitLines.forEach((line, i) => pdf.text(line, PW - M, footerStart + 36 + i * 10, { align: 'right' }));
+
+      // Thank you note
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(7);
+      pdf.setTextColor(203, 213, 225);
+      pdf.text('THANK YOU FOR YOUR BUSINESS!', PW / 2, footerStart + 58, { align: 'center' });
+
+      // Brand accent bar (bottom) — drawn on the very last page
+      pdf.setPage(pdf.getNumberOfPages());
+      pdf.setFillColor(...BRAND);
+      pdf.rect(0, PH - 8, PW, 8, 'F');
+
+      // ── Download ─────────────────────────────────────────────────────
+      const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
+      const pdfBlob = pdf.output('blob');
+      const blobUrl = URL.createObjectURL(pdfBlob);
+
+      if (pdfWindow && !pdfWindow.closed) {
+        // Navigate the pre-opened window to the PDF blob URL.
+        // • iOS Safari  → opens the PDF viewer; Share Sheet lets user save/share
+        // • Android     → opens PDF in Chrome PDF viewer (download from menu)
+        // • Desktop     → opens PDF in browser PDF viewer or prompts download
+        pdfWindow.location.href = blobUrl;
+      } else {
+        // Popup was blocked — fall back to a hidden <a download> click.
+        // Works on Android Chrome and desktop browsers.
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // Revoke the blob URL after enough time for the viewer/download to start.
+      // 30 s is generous: iOS Share Sheet and Android download manager both
+      // read the blob well within this window.
+      const BLOB_CLEANUP_MS = 30_000;
+      setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_CLEANUP_MS);
+    } catch (err) {
+      if (pdfWindow && !pdfWindow.closed) pdfWindow.close();
+      console.error('PDF export failed:', err);
+      setPdfError('Could not generate PDF. Please try again.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 overflow-y-auto">
-      <div className="w-full max-w-4xl mx-auto py-12 px-4">
-        <div className="flex justify-between items-center mb-8 text-white">
-          <h3 className="text-2xl font-bold font-display">Invoice Preview</h3>
-          <div className="flex gap-3">
-            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20">
-              <Printer className="w-5 h-5" /> Print
+      <div className="w-full max-w-5xl mx-auto py-8 px-4">
+
+        {/* Toolbar */}
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 text-white print:hidden">
+          <h3 className="text-xl sm:text-2xl font-bold font-display">Invoice Preview</h3>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setIsEditingSettings(!isEditingSettings)}
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm"
+            >
+              <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Details' : 'Edit Details'}
             </button>
-            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100">Close</button>
+            <button
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm disabled:opacity-60"
+            >
+              <Download className="w-4 h-4" />
+              {isExportingPdf ? 'Generating…' : 'Download PDF'}
+            </button>
+            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm print:hidden">
+              <Printer className="w-4 h-4" /> Print
+            </button>
+            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 text-sm">Close</button>
           </div>
         </div>
 
-        <div className="bg-white p-12 rounded-lg shadow-2xl text-slate-900 print:shadow-none print:p-0" id="invoice">
-          {/* Header */}
-          <div className="flex justify-between items-start border-b-2 border-slate-900 pb-8 mb-12">
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
-                  <Briefcase className="w-6 h-6 text-white" />
+        {/* PDF error banner */}
+        {pdfError && (
+          <div className="mb-4 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-medium print:hidden">
+            <span>{pdfError}</span>
+            <button onClick={() => setPdfError('')} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+          </div>
+        )}
+
+        {/* Editable Invoice Settings Panel */}
+        {isEditingSettings && (
+          <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden print:hidden">
+            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+              <h4 className="font-bold text-slate-900 flex items-center gap-2"><Edit3 className="w-4 h-4 text-brand" /> Invoice & Customer Details</h4>
+              <button onClick={handleSaveSettings} className="btn-primary flex items-center gap-2 text-sm py-2">
+                <Save className="w-4 h-4" /> Save Details
+              </button>
+            </div>
+            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Invoice Details */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Invoice Details</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Number</label>
+                  <input className="input-field" value={invoiceDetails.invoiceNumber} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceNumber: e.target.value})} />
                 </div>
-                <h1 className="text-2xl font-black uppercase tracking-tighter font-display">Service Track Pro</h1>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Date</label>
+                  <input type="date" className="input-field" value={invoiceDetails.invoiceDate} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceDate: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Due Date</label>
+                  <input type="date" className="input-field" value={invoiceDetails.dueDate} onChange={e => setInvoiceDetails({...invoiceDetails, dueDate: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Date of Order</label>
+                  <input type="date" className="input-field" value={invoiceDetails.dateOfOrder} onChange={e => setInvoiceDetails({...invoiceDetails, dateOfOrder: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Job Location</label>
+                  <input className="input-field" placeholder="Job site location" value={invoiceDetails.jobLocation} onChange={e => setInvoiceDetails({...invoiceDetails, jobLocation: e.target.value})} />
+                </div>
               </div>
-              <p className="text-sm text-slate-500">123 Service Way, Industrial Park</p>
-              <p className="text-sm text-slate-500">Springfield, ST 55555</p>
-              <p className="text-sm text-slate-500">(555) 123-4567 • billing@servicetrackpro.com</p>
-            </div>
-            <div className="text-right">
-              <h2 className="text-5xl font-black text-slate-200 uppercase mb-4 font-display">Invoice</h2>
-              <p className="font-bold">Job #: {job.job_number}</p>
-              <p className="text-slate-500">Date: {new Date().toLocaleDateString()}</p>
-            </div>
-          </div>
-
-          {/* Customer Info */}
-          <div className="grid grid-cols-2 gap-12 mb-12">
-            <div>
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Bill To:</h4>
-              <p className="text-xl font-bold">{job.customer_name}</p>
-              <p className="text-slate-600">{job.address}</p>
-            </div>
-            <div>
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project:</h4>
-              <p className="text-xl font-bold">{job.job_name}</p>
-              <p className="text-slate-600">Status: {job.status}</p>
-            </div>
-          </div>
-
-          {/* Line Items */}
-          <div className="space-y-12 mb-12">
-            {job.logs?.map(log => (
-              <div key={log.id} className="border-t border-slate-100 pt-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h5 className="font-bold text-lg">{new Date(log.date).toLocaleDateString()} - Daily Log</h5>
-                  <p className="text-xs text-slate-400 italic">{log.notes}</p>
+              {/* Customer Details */}
+              <div className="space-y-4">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact</p>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Phone</label>
+                  <input className="input-field" type="tel" placeholder="(555) 000-0000" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
                 </div>
-                
-                <table className="w-full text-sm">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Email</label>
+                  <input className="input-field" type="email" placeholder="contact@company.com" value={customer.email} onChange={e => setCustomer({...customer, email: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Billing Address (if different from site)</label>
+                  <input className="input-field" placeholder="Billing / PO address" value={customer.billToAddress} onChange={e => setCustomer({...customer, billToAddress: e.target.value})} />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ===================== INVOICE DOCUMENT ===================== */}
+        <div className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
+
+          {/* Color Bar */}
+          <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
+
+          <div className="p-5 sm:p-8 md:p-10">
+            {/* Header: Company + INVOICE */}
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-5 mb-8">
+              {/* Company Info */}
+              <div className="flex items-start gap-4">
+                {company.logo ? (
+                  <img src={company.logo} alt="Company Logo" className="h-12 w-auto object-contain sm:h-16" />
+                ) : (
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/20 flex-shrink-0">
+                    <Briefcase className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
+                  </div>
+                )}
+                <div>
+                  <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-display text-slate-900">{company.name}</h1>
+                  <p className="text-sm text-slate-500 mt-0.5">{company.address}</p>
+                  <p className="text-sm text-slate-500">{company.city}</p>
+                  <div className="flex flex-wrap gap-x-4 mt-1">
+                    {company.phone && <p className="text-sm text-slate-500">{company.phone}</p>}
+                    {company.email && <p className="text-sm text-slate-500">{company.email}</p>}
+                    {company.website && <p className="text-sm text-slate-500">{company.website}</p>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Invoice Title + Meta */}
+              <div className="sm:text-right">
+                <h2 className="text-4xl sm:text-6xl font-black text-slate-100 uppercase tracking-tighter font-display leading-none mb-3">INVOICE</h2>
+                <div className="space-y-1 text-sm">
+                  <div className="flex items-center sm:justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Invoice #</span>
+                    <span className="font-bold text-slate-900 font-mono">{invoiceDetails.invoiceNumber}</span>
+                  </div>
+                  <div className="flex items-center sm:justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Invoice Date</span>
+                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.invoiceDate)}</span>
+                  </div>
+                  <div className="flex items-center sm:justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Due Date</span>
+                    <span className="font-semibold text-red-600">{formatDate(invoiceDetails.dueDate)}</span>
+                  </div>
+                  <div className="flex items-center sm:justify-end gap-3">
+                    <span className="text-slate-400 font-medium">Date of Order</span>
+                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.dateOfOrder)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="h-px bg-slate-200 mb-8" />
+
+            {/* Bill To + Project Info */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
+              {/* Bill To */}
+              <div className="bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
+                <p className="text-[10px] font-bold text-brand uppercase tracking-widest mb-3">Bill To</p>
+                <p className="text-base sm:text-lg font-bold text-slate-900 leading-tight">{job.customer_name}</p>
+                <p className="text-sm text-slate-600 mt-1">{billToAddress}</p>
+                {customer.phone && (
+                  <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400" />{customer.phone}</p>
+                )}
+                {customer.email && (
+                  <p className="text-sm text-slate-600 flex items-center gap-1.5"><Mail className="w-3 h-3 text-slate-400" />{customer.email}</p>
+                )}
+              </div>
+
+              {/* Project Details */}
+              <div className="sm:col-span-2 grid grid-cols-2 gap-3 sm:gap-4">
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project</p>
+                  <p className="font-bold text-slate-900 text-sm sm:text-base">{job.job_name}</p>
+                  <span className={`inline-block mt-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${
+                    job.status === 'active' 
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-slate-100 text-slate-500 border-slate-200'
+                  }`}>{job.status}</span>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Number</p>
+                  <p className="font-bold font-mono text-slate-900 text-sm sm:text-base break-all">{job.job_number}</p>
+                </div>
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Location</p>
+                  <p className="text-sm text-slate-700 flex items-start gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
+                    {invoiceDetails.jobLocation || job.address || '—'}
+                  </p>
+                </div>
+                <div className="bg-brand rounded-xl p-3 sm:p-4 text-white">
+                  <p className="text-[10px] font-bold text-white/70 uppercase tracking-widest mb-2">Amount Due</p>
+                  <p className="text-xl sm:text-2xl font-black font-mono">${grandTotal.toFixed(2)}</p>
+                  <p className="text-[10px] text-white/60 mt-1">Due {formatDate(invoiceDetails.dueDate)}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Line Items */}
+            <div className="mb-6 sm:mb-8">
+              <div className="rounded-xl overflow-hidden border border-slate-200 overflow-x-auto">
+                <table className="w-full text-sm min-w-[560px]">
                   <thead>
-                    <tr className="text-left border-b border-slate-200">
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400">Description</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-center">Qty/Hrs</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Rate</th>
-                      <th className="pb-2 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Total</th>
+                    <tr className="bg-slate-900 text-white">
+                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Description</th>
+                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Date</th>
+                      <th className="px-4 sm:px-5 py-3 text-center text-[10px] font-bold uppercase tracking-widest">Qty / Hrs</th>
+                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Rate</th>
+                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Total</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {log.data.employees.map((e, idx) => (
-                      <tr key={`emp-${idx}`}>
-                        <td className="py-2">Labor: {employees.find(emp => emp.id === e.employeeId)?.name}</td>
-                        <td className="py-2 text-center font-mono">{e.hours}h</td>
-                        <td className="py-2 text-right font-mono">${e.rate.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(e.hours * e.rate).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {log.data.equipment.map((e, idx) => (
-                      <tr key={`eq-${idx}`}>
-                        <td className="py-2">Equipment: {equipment.find(eq => eq.id === e.equipmentId)?.name}</td>
-                        <td className="py-2 text-center font-mono">{e.hours}h</td>
-                        <td className="py-2 text-right font-mono">${e.rate.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(e.hours * e.rate).toFixed(2)}</td>
-                      </tr>
-                    ))}
-                    {log.data.materials.map((m, idx) => (
-                      <tr key={`mat-${idx}`}>
-                        <td className="py-2">Material: {m.name}</td>
-                        <td className="py-2 text-center font-mono">{m.quantity}</td>
-                        <td className="py-2 text-right font-mono">${m.unitPrice.toFixed(2)}</td>
-                        <td className="py-2 text-right font-mono">${(m.quantity * m.unitPrice).toFixed(2)}</td>
-                      </tr>
-                    ))}
+                  <tbody>
+                    {job.logs?.map((log, logIdx) => {
+                      const rows: React.ReactNode[] = [];
+                      const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                      if (log.notes) {
+                        rows.push(
+                          <tr key={`desc-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
+                            <td colSpan={5} className="px-5 pt-4 pb-1">
+                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest mr-2">Daily Log #{logIdx + 1}</span>
+                              <span className="text-xs text-slate-500 italic">{log.notes}</span>
+                            </td>
+                          </tr>
+                        );
+                      } else {
+                        rows.push(
+                          <tr key={`header-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
+                            <td colSpan={5} className="px-5 pt-4 pb-1">
+                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest">Daily Log #{logIdx + 1}</span>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      log.data.employees.forEach((e, idx) => {
+                        const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+                        rows.push(
+                          <tr key={`emp-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700">
+                              <span className="font-medium">Labor — </span>{empName}
+                              <span className="ml-2 text-[10px] text-slate-400 uppercase font-bold tracking-wider">{employees.find(emp => emp.id === e.employeeId)?.role}</span>
+                            </td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      log.data.equipment.forEach((e, idx) => {
+                        const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+                        rows.push(
+                          <tr key={`eq-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Equipment — </span>{eqName}</td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      log.data.materials.forEach((m, idx) => {
+                        rows.push(
+                          <tr key={`mat-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
+                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Material — </span>{m.name}</td>
+                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
+                            <td className="px-5 py-2.5 text-center font-mono font-medium">{m.quantity} units</td>
+                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${m.unitPrice.toFixed(2)}/unit</td>
+                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(m.quantity * m.unitPrice).toFixed(2)}</td>
+                          </tr>
+                        );
+                      });
+
+                      return rows;
+                    })}
                   </tbody>
                 </table>
               </div>
-            ))}
-          </div>
+            </div>
 
-          {/* Totals */}
-          <div className="flex justify-end pt-12 border-t-2 border-slate-900">
-            <div className="w-64 space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Labor Total:</span>
-                <span className="font-mono font-bold">${laborTotal.toFixed(2)}</span>
+            {/* Totals */}
+            <div className="flex justify-end mb-6 sm:mb-8">
+              <div className="w-full sm:w-72 space-y-2 bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Labor Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${laborTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Equipment Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${equipmentTotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Materials Subtotal</span>
+                  <span className="font-mono font-semibold text-slate-700">${materialTotal.toFixed(2)}</span>
+                </div>
+                <div className="h-px bg-slate-200 my-2" />
+                <div className="flex justify-between items-center">
+                  <span className="text-base font-black uppercase tracking-tight text-slate-900">Total Due</span>
+                  <span className="text-2xl font-black font-mono text-brand">${grandTotal.toFixed(2)}</span>
+                </div>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Equipment Total:</span>
-                <span className="font-mono font-bold">${equipmentTotal.toFixed(2)}</span>
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-slate-200 pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Payment Terms</p>
+                <p className="text-sm text-slate-600">{company.paymentTerms}</p>
+                <p className="text-xs text-slate-400 mt-1">Please include invoice number <strong className="text-slate-600">{invoiceDetails.invoiceNumber}</strong> on all payments.</p>
               </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Material Total:</span>
-                <span className="font-mono font-bold">${materialTotal.toFixed(2)}</span>
+              <div className="md:text-right">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Make checks payable to:</p>
+                <p className="text-sm font-bold text-slate-900">{company.name}</p>
+                <p className="text-xs text-slate-500">{company.address}, {company.city}</p>
+                {company.email && <p className="text-xs text-slate-500">{company.email}</p>}
               </div>
-              <div className="pt-3 border-t border-slate-200 flex justify-between items-center">
-                <span className="text-lg font-black uppercase tracking-tighter">Grand Total:</span>
-                <span className="text-2xl font-black font-mono">${grandTotal.toFixed(2)}</span>
-              </div>
+            </div>
+
+            <div className="mt-6 text-center">
+              <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Thank you for your business!</p>
             </div>
           </div>
 
-          {/* Footer */}
-          <div className="mt-24 pt-12 border-t border-slate-100 text-center">
-            <p className="text-xs text-slate-400 uppercase tracking-widest font-bold">Thank you for your business</p>
-            <p className="text-[10px] text-slate-300 mt-2 italic">Payment is due within 30 days. Please include job number on all correspondence.</p>
-          </div>
+          {/* Bottom Color Bar */}
+          <div className="h-2 bg-brand rounded-b-lg print:rounded-none" />
         </div>
       </div>
     </div>
@@ -1191,6 +1886,12 @@ const Settings = () => {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
+
+  // Company Settings
+  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
+  const [companySaved, setCompanySaved] = useState(false);
+  const [logoError, setLogoError] = useState('');
+  const logoInputRef = useRef<HTMLInputElement>(null);
 
   const fetchAll = async () => {
     const [empRes, eqRes, matRes, tempRes] = await Promise.all([
@@ -1238,6 +1939,44 @@ const Settings = () => {
     fetchAll();
   };
 
+  const handleSaveCompany = (e: React.FormEvent) => {
+    e.preventDefault();
+    saveCompanySettings(company);
+    setCompanySaved(true);
+    setTimeout(() => setCompanySaved(false), 2500);
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      setLogoError('Unsupported file type. Please upload a PNG, JPG, SVG, GIF, or WebP image.');
+      e.target.value = '';
+      return;
+    }
+
+    // Validate file size (max 2MB to stay within localStorage limits)
+    const maxSizeBytes = 2 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      setLogoError('Image is too large. Please upload an image under 2 MB.');
+      e.target.value = '';
+      return;
+    }
+
+    setLogoError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCompany(prev => ({ ...prev, logo: reader.result as string }));
+    };
+    reader.onerror = () => {
+      setLogoError('Failed to read the image file. Please try again.');
+    };
+    reader.readAsDataURL(file);
+  };
+
   const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
   const filteredEquipment = equipment.filter(e => e.name.toLowerCase().includes(searchEquipment.toLowerCase()));
   const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchMaterials.toLowerCase()));
@@ -1247,7 +1986,7 @@ const Settings = () => {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
-          <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
+          <p className="text-slate-500 mt-1">Manage company info, employees, equipment, and materials.</p>
         </div>
         <div className="flex gap-3">
           <div className="px-4 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-3 shadow-sm">
@@ -1256,6 +1995,142 @@ const Settings = () => {
           </div>
         </div>
       </header>
+
+      {/* Company Information */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
+            <Building2 className="w-5 h-5 text-brand" />
+          </div>
+          <div>
+            <h3 className="text-2xl font-bold text-slate-900 font-display">Company Information</h3>
+            <p className="text-sm text-slate-500">This information appears on your invoices.</p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveCompany} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+            <p className="text-sm font-medium text-slate-600">Saved changes apply to all new invoices.</p>
+            <button
+              type="submit"
+              className={`btn-primary flex items-center gap-2 text-sm py-2 transition-all ${companySaved ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
+            >
+              {companySaved ? <><Check className="w-4 h-4" /> Saved!</> : <><Save className="w-4 h-4" /> Save Company Info</>}
+            </button>
+          </div>
+
+          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Logo Upload */}
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Company Logo</label>
+              <div className="flex items-center gap-6">
+                <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-50 overflow-hidden flex-shrink-0">
+                  {company.logo ? (
+                    <img src={company.logo} alt="Logo" className="w-full h-full object-contain p-2" />
+                  ) : (
+                    <Building2 className="w-10 h-10 text-slate-300" />
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => logoInputRef.current?.click()}
+                    className="btn-secondary flex items-center gap-2 text-sm"
+                  >
+                    <Upload className="w-4 h-4" /> Upload Logo
+                  </button>
+                  {company.logo && (
+                    <button
+                      type="button"
+                      onClick={() => setCompany(prev => ({ ...prev, logo: '' }))}
+                      className="text-xs text-red-500 hover:underline block"
+                    >
+                      Remove logo
+                    </button>
+                  )}
+                  <p className="text-xs text-slate-400">PNG, JPG, SVG, WebP. Max 2 MB. Recommended: 300×100px</p>
+                  {logoError && <p className="text-xs text-red-500 font-medium">{logoError}</p>}
+                </div>
+                <input
+                  ref={logoInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                required
+                className="input-field"
+                placeholder="e.g. Acme Services LLC"
+                value={company.name}
+                onChange={e => setCompany({...company, name: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Website</label>
+              <input
+                className="input-field"
+                placeholder="www.yourcompany.com"
+                value={company.website}
+                onChange={e => setCompany({...company, website: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Street Address</label>
+              <input
+                className="input-field"
+                placeholder="123 Main Street"
+                value={company.address}
+                onChange={e => setCompany({...company, address: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">City, State, ZIP</label>
+              <input
+                className="input-field"
+                placeholder="Springfield, ST 55555"
+                value={company.city}
+                onChange={e => setCompany({...company, city: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Phone</label>
+              <input
+                type="tel"
+                className="input-field"
+                placeholder="(555) 123-4567"
+                value={company.phone}
+                onChange={e => setCompany({...company, phone: e.target.value})}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+              <input
+                type="email"
+                className="input-field"
+                placeholder="billing@yourcompany.com"
+                value={company.email}
+                onChange={e => setCompany({...company, email: e.target.value})}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Payment Terms (shown on invoice footer)</label>
+              <textarea
+                className="input-field resize-none"
+                rows={2}
+                placeholder="e.g. Payment is due within 30 days of invoice date."
+                value={company.paymentTerms}
+                onChange={e => setCompany({...company, paymentTerms: e.target.value})}
+              />
+            </div>
+          </div>
+        </form>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
         {/* Employees */}
