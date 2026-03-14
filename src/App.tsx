@@ -1395,9 +1395,11 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
         });
       });
 
+      // Reserve 210pt at the bottom so totals + footer always fit on the same
+      // page as the last table row (totals≈100pt + footer≈80pt + brand bar≈30pt).
       autoTable(pdf, {
         startY: y,
-        margin: { left: M, right: M },
+        margin: { left: M, right: M, bottom: 210 },
         head: [['Description', 'Date', 'Qty / Hrs', 'Rate', 'Total']],
         body: tableBody,
         styles: { font: 'helvetica', fontSize: 8, cellPadding: 5, textColor: DARK, lineColor: [226, 232, 240], lineWidth: 0.3 },
@@ -1460,13 +1462,11 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
       pdf.text(`$${grandTotal.toFixed(2)}`, totX + totW - 10, finalY + 66, { align: 'right' });
 
       // ── Footer ───────────────────────────────────────────────────────
-      // totals box ends at finalY + 80; footer needs ~80pt of space
+      // autoTable's margin.bottom=210 guarantees at least 210 pt of space
+      // below the last table row, so totals + footer always sit on the same
+      // page without an extra page break.
       const totalsEndY = finalY + 80;
-      const needsNewPage = totalsEndY + 100 > PH - 40;
-      if (needsNewPage) {
-        pdf.addPage();
-      }
-      const footerStart = needsNewPage ? 40 : totalsEndY + 20;
+      const footerStart = totalsEndY + 20;
 
       pdf.setDrawColor(226, 232, 240);
       pdf.setLineWidth(0.5);
@@ -1504,9 +1504,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
       pdf.setTextColor(203, 213, 225);
       pdf.text('THANK YOU FOR YOUR BUSINESS!', PW / 2, footerStart + 58, { align: 'center' });
 
-      // Brand accent bar (bottom)
-      const lastPage = pdf.internal.pages.length - 1;
-      pdf.setPage(lastPage);
+      // Brand accent bar (bottom) — drawn on the very last page
+      pdf.setPage(pdf.getNumberOfPages());
       pdf.setFillColor(...BRAND);
       pdf.rect(0, PH - 8, PW, 8, 'F');
 
@@ -1551,27 +1550,27 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
       <div className="w-full max-w-5xl mx-auto py-8 px-4">
 
         {/* Toolbar */}
-        <div className="flex justify-between items-center mb-6 text-white print:hidden">
-          <h3 className="text-2xl font-bold font-display">Invoice Preview</h3>
-          <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 text-white print:hidden">
+          <h3 className="text-xl sm:text-2xl font-bold font-display">Invoice Preview</h3>
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setIsEditingSettings(!isEditingSettings)}
-              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2"
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm"
             >
-              <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Settings' : 'Edit Details'}
+              <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Details' : 'Edit Details'}
             </button>
             <button
               onClick={handleExportPdf}
               disabled={isExportingPdf}
-              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 disabled:opacity-60"
+              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm disabled:opacity-60"
             >
-              <Download className="w-5 h-5" />
+              <Download className="w-4 h-4" />
               {isExportingPdf ? 'Generating…' : 'Download PDF'}
             </button>
-            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 print:hidden">
-              <Printer className="w-5 h-5" /> Print
+            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm print:hidden">
+              <Printer className="w-4 h-4" /> Print
             </button>
-            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100">Close</button>
+            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 text-sm">Close</button>
           </div>
         </div>
 
@@ -1643,20 +1642,20 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
           {/* Color Bar */}
           <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
 
-          <div className="p-10">
+          <div className="p-5 sm:p-8 md:p-10">
             {/* Header: Company + INVOICE */}
-            <div className="flex justify-between items-start mb-10">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-5 mb-8">
               {/* Company Info */}
               <div className="flex items-start gap-4">
                 {company.logo ? (
-                  <img src={company.logo} alt="Company Logo" className="h-16 w-auto object-contain" />
+                  <img src={company.logo} alt="Company Logo" className="h-12 w-auto object-contain sm:h-16" />
                 ) : (
-                  <div className="w-14 h-14 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/20 flex-shrink-0">
-                    <Briefcase className="w-8 h-8 text-white" />
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/20 flex-shrink-0">
+                    <Briefcase className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
                   </div>
                 )}
                 <div>
-                  <h1 className="text-2xl font-black uppercase tracking-tight font-display text-slate-900">{company.name}</h1>
+                  <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-display text-slate-900">{company.name}</h1>
                   <p className="text-sm text-slate-500 mt-0.5">{company.address}</p>
                   <p className="text-sm text-slate-500">{company.city}</p>
                   <div className="flex flex-wrap gap-x-4 mt-1">
@@ -1668,22 +1667,22 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
               </div>
 
               {/* Invoice Title + Meta */}
-              <div className="text-right">
-                <h2 className="text-6xl font-black text-slate-100 uppercase tracking-tighter font-display leading-none mb-3">INVOICE</h2>
+              <div className="sm:text-right">
+                <h2 className="text-4xl sm:text-6xl font-black text-slate-100 uppercase tracking-tighter font-display leading-none mb-3">INVOICE</h2>
                 <div className="space-y-1 text-sm">
-                  <div className="flex items-center justify-end gap-3">
+                  <div className="flex items-center sm:justify-end gap-3">
                     <span className="text-slate-400 font-medium">Invoice #</span>
                     <span className="font-bold text-slate-900 font-mono">{invoiceDetails.invoiceNumber}</span>
                   </div>
-                  <div className="flex items-center justify-end gap-3">
+                  <div className="flex items-center sm:justify-end gap-3">
                     <span className="text-slate-400 font-medium">Invoice Date</span>
                     <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.invoiceDate)}</span>
                   </div>
-                  <div className="flex items-center justify-end gap-3">
+                  <div className="flex items-center sm:justify-end gap-3">
                     <span className="text-slate-400 font-medium">Due Date</span>
                     <span className="font-semibold text-red-600">{formatDate(invoiceDetails.dueDate)}</span>
                   </div>
-                  <div className="flex items-center justify-end gap-3">
+                  <div className="flex items-center sm:justify-end gap-3">
                     <span className="text-slate-400 font-medium">Date of Order</span>
                     <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.dateOfOrder)}</span>
                   </div>
@@ -1695,11 +1694,11 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
             <div className="h-px bg-slate-200 mb-8" />
 
             {/* Bill To + Project Info */}
-            <div className="grid grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
               {/* Bill To */}
-              <div className="col-span-1 bg-slate-50 rounded-xl p-5 border border-slate-100">
+              <div className="bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
                 <p className="text-[10px] font-bold text-brand uppercase tracking-widest mb-3">Bill To</p>
-                <p className="text-lg font-bold text-slate-900 leading-tight">{job.customer_name}</p>
+                <p className="text-base sm:text-lg font-bold text-slate-900 leading-tight">{job.customer_name}</p>
                 <p className="text-sm text-slate-600 mt-1">{billToAddress}</p>
                 {customer.phone && (
                   <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400" />{customer.phone}</p>
@@ -1710,46 +1709,46 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
               </div>
 
               {/* Project Details */}
-              <div className="col-span-2 grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+              <div className="sm:col-span-2 grid grid-cols-2 gap-3 sm:gap-4">
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project</p>
-                  <p className="font-bold text-slate-900">{job.job_name}</p>
+                  <p className="font-bold text-slate-900 text-sm sm:text-base">{job.job_name}</p>
                   <span className={`inline-block mt-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${
                     job.status === 'active' 
                       ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : 'bg-slate-100 text-slate-500 border-slate-200'
                   }`}>{job.status}</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Number</p>
-                  <p className="font-bold font-mono text-slate-900">{job.job_number}</p>
+                  <p className="font-bold font-mono text-slate-900 text-sm sm:text-base break-all">{job.job_number}</p>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Location</p>
                   <p className="text-sm text-slate-700 flex items-start gap-1.5">
                     <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
                     {invoiceDetails.jobLocation || job.address || '—'}
                   </p>
                 </div>
-                <div className="bg-brand rounded-xl p-4 text-white">
+                <div className="bg-brand rounded-xl p-3 sm:p-4 text-white">
                   <p className="text-[10px] font-bold text-white/70 uppercase tracking-widest mb-2">Amount Due</p>
-                  <p className="text-2xl font-black font-mono">${grandTotal.toFixed(2)}</p>
+                  <p className="text-xl sm:text-2xl font-black font-mono">${grandTotal.toFixed(2)}</p>
                   <p className="text-[10px] text-white/60 mt-1">Due {formatDate(invoiceDetails.dueDate)}</p>
                 </div>
               </div>
             </div>
 
             {/* Line Items */}
-            <div className="mb-8">
-              <div className="rounded-xl overflow-hidden border border-slate-200">
-                <table className="w-full text-sm">
+            <div className="mb-6 sm:mb-8">
+              <div className="rounded-xl overflow-hidden border border-slate-200 overflow-x-auto">
+                <table className="w-full text-sm min-w-[560px]">
                   <thead>
                     <tr className="bg-slate-900 text-white">
-                      <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Description</th>
-                      <th className="px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Date</th>
-                      <th className="px-5 py-3 text-center text-[10px] font-bold uppercase tracking-widest">Qty / Hrs</th>
-                      <th className="px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Rate</th>
-                      <th className="px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Total</th>
+                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Description</th>
+                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Date</th>
+                      <th className="px-4 sm:px-5 py-3 text-center text-[10px] font-bold uppercase tracking-widest">Qty / Hrs</th>
+                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Rate</th>
+                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Total</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1824,8 +1823,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
             </div>
 
             {/* Totals */}
-            <div className="flex justify-end mb-8">
-              <div className="w-72 space-y-2 bg-slate-50 rounded-xl p-5 border border-slate-100">
+            <div className="flex justify-end mb-6 sm:mb-8">
+              <div className="w-full sm:w-72 space-y-2 bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Labor Subtotal</span>
                   <span className="font-mono font-semibold text-slate-700">${laborTotal.toFixed(2)}</span>
