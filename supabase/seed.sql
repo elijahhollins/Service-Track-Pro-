@@ -354,6 +354,29 @@ VALUES
   )
 ON CONFLICT DO NOTHING;
 
+-- -----------------------------------------------------------------------------
+-- 8. DEMO COMPANY — link all seeded data to a single demo company
+--    Run AFTER multi_tenancy_setup.sql has added the company_id columns.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+  demo_id uuid := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+BEGIN
+  -- Create the demo company (idempotent)
+  INSERT INTO public.companies (id, name)
+  VALUES (demo_id, 'Demo Construction LLC')
+  ON CONFLICT (id) DO NOTHING;
+
+  -- Assign all existing rows (without a company) to the demo company
+  UPDATE public.users      SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.employees  SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.equipment  SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.materials  SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.jobs       SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.work_logs  SET company_id = demo_id WHERE company_id IS NULL;
+  UPDATE public.templates  SET company_id = demo_id WHERE company_id IS NULL;
+END $$;
+
 -- =============================================================================
 -- Done! Summary of seeded data:
 --   Auth users  : 2  (admin@demo.com / foreman@demo.com — password: Demo1234!)
@@ -364,4 +387,5 @@ ON CONFLICT DO NOTHING;
 --   Jobs        : 5  (3 active, 2 completed)
 --   Work logs   : 6
 --   Templates   : 3
+--   Company     : 1  (Demo Construction LLC — id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa)
 -- =============================================================================

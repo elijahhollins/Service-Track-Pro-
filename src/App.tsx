@@ -30,7 +30,7 @@ import {
   Save
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, CompanySettings, CustomerDetails, InvoiceDetails } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Company, CompanySettings, CustomerDetails, InvoiceDetails } from './types';
 import { supabase } from './supabase';
 
 // --- LocalStorage Helpers ---
@@ -102,6 +102,7 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -113,6 +114,12 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
     
     try {
       if (isSignUp) {
+        if (!companyName.trim()) {
+          setError('Please enter your company name.');
+          setLoading(false);
+          return;
+        }
+
         // 1. Sign up to Supabase Auth
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email,
@@ -122,18 +129,14 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
         if (authError) throw authError;
 
         if (authData.user) {
-          // 2. Create profile in public.users
-          const { error: profileError } = await supabase
-            .from('users')
-            .insert([{ 
-              name: name || email.split('@')[0], 
-              email, 
-              password, // Storing for legacy reasons as per your SQL, but Auth handles it
-              role: 'foreman' 
-            }]);
+          // 2. Create profile + company via secure RPC (handles RLS bootstrap)
+          const { error: regError } = await supabase.rpc('register_with_company', {
+            p_user_name: name || email.split('@')[0],
+            p_company_name: companyName.trim(),
+          });
 
-          if (profileError) console.error('Profile creation error:', profileError);
-          
+          if (regError) console.error('Registration error:', regError);
+
           setError('Account created! You can now sign in.');
           setIsSignUp(false);
         }
@@ -196,17 +199,33 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
           )}
           
           {isSignUp && (
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-              <input 
-                type="text" 
-                required 
-                className="input-field" 
-                placeholder="John Doe"
-                value={name}
-                onChange={e => setName(e.target.value)}
-              />
-            </div>
+            <>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+                <input 
+                  type="text" 
+                  required 
+                  className="input-field" 
+                  placeholder="John Doe"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+                <input 
+                  type="text" 
+                  required 
+                  className="input-field" 
+                  placeholder="e.g. Acme Services LLC"
+                  value={companyName}
+                  onChange={e => setCompanyName(e.target.value)}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Enter your company name. If the company already exists you will join it; otherwise a new company will be created and you will be the admin.
+                </p>
+              </div>
+            </>
           )}
 
           <div>
@@ -257,7 +276,86 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   );
 };
 
-const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, onLogout: () => void }) => {
+// --- Company Registration Modal (shown when user has no company_id) ---
+const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (companyId: string) => void }) => {
+  const [companyName, setCompanyName] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyName.trim()) return;
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
+        p_user_name:    user.name,
+        p_company_name: companyName.trim(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const companyId = (data as { company_id: string })?.company_id;
+      if (companyId) {
+        onComplete(companyId);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
+      >
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+            <Building2 className="w-6 h-6 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Company</h2>
+          <p className="text-slate-500 text-sm text-center mt-1">
+            Enter your company name to get started. Create a new company or join an existing one.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+              {error}
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+            <input
+              type="text"
+              required
+              className="input-field"
+              placeholder="e.g. Acme Services LLC"
+              value={companyName}
+              onChange={e => setCompanyName(e.target.value)}
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              If this company already exists you will join it as a team member; otherwise a new company will be created and you will be the admin.
+            </p>
+          </div>
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
+            {loading ? 'Setting up…' : 'Continue'}
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
+const Layout = ({ children, activeTab, setActiveTab, user, companyName, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, companyName: string, onLogout: () => void }) => {
   return (
     <div className="h-screen flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar */}
@@ -266,7 +364,7 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
           <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
             <Briefcase className="w-5 h-5 text-white" />
           </div>
-          <h1 className="text-white font-bold text-lg tracking-tight font-display">Service Track Pro</h1>
+          <h1 className="text-white font-bold text-lg tracking-tight font-display">{companyName || 'Service Track Pro'}</h1>
         </div>
         
         <nav className="flex-1 px-4 space-y-1">
@@ -369,9 +467,11 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
 
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user.company_id) return; // guard: user must belong to a company
+    const jobWithCompany = { ...newJob, company_id: user.company_id };
     const { data, error } = await supabase
       .from('jobs')
-      .insert([newJob])
+      .insert([jobWithCompany])
       .select()
       .single();
       
@@ -656,11 +756,13 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   };
 
   const handleRepeatLog = async (log: WorkLog) => {
+    if (!user.company_id) return; // guard: user must belong to a company
     const newLog = {
       job_id: jobId,
       date: new Date().toISOString().split('T')[0],
       notes: log.notes,
-      data: log.data
+      data: log.data,
+      company_id: user.company_id,
     };
     await supabase.from('work_logs').insert([newLog]);
     fetchJob();
@@ -799,7 +901,8 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
       <AnimatePresence>
         {isAddingLog && (
           <WorkLogForm 
-            jobId={jobId} 
+            jobId={jobId}
+            companyId={user.company_id}
             employees={employees} 
             equipment={equipment} 
             materials={materials}
@@ -825,8 +928,9 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   );
 };
 
-const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave }: { 
-  jobId: number, 
+const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templates, onClose, onSave }: { 
+  jobId: number,
+  companyId: string | undefined,
   employees: Employee[], 
   equipment: Equipment[], 
   materials: Material[],
@@ -895,6 +999,7 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!companyId) return; // guard: must have a company to save logs
     const logData: WorkLogEntry = {
       employees: selectedEmployees,
       equipment: selectedEquipment,
@@ -903,7 +1008,7 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
     
     const { error } = await supabase
       .from('work_logs')
-      .insert([{ job_id: jobId, date, notes, data: logData }]);
+      .insert([{ job_id: jobId, date, notes, data: logData, company_id: companyId }]);
       
     if (!error) onSave();
   };
@@ -1904,7 +2009,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   );
 };
 
-const Settings = () => {
+const Settings = ({ user }: { user: User }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -1948,7 +2053,8 @@ const Settings = () => {
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('employees').insert([newEmployee]);
+    if (!user.company_id) return; // guard: must have a company
+    await supabase.from('employees').insert([{ ...newEmployee, company_id: user.company_id }]);
     setNewEmployee({ name: '', role: '', hourly_rate: 0 });
     setIsAddingEmployee(false);
     fetchAll();
@@ -1956,7 +2062,8 @@ const Settings = () => {
 
   const handleAddEquipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('equipment').insert([newEquipment]);
+    if (!user.company_id) return; // guard: must have a company
+    await supabase.from('equipment').insert([{ ...newEquipment, company_id: user.company_id }]);
     setNewEquipment({ name: '', hourly_rate: 0 });
     setIsAddingEquipment(false);
     fetchAll();
@@ -1964,7 +2071,8 @@ const Settings = () => {
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('materials').insert([newMaterial]);
+    if (!user.company_id) return; // guard: must have a company
+    await supabase.from('materials').insert([{ ...newMaterial, company_id: user.company_id }]);
     setNewMaterial({ name: '', unit_price: 0 });
     setIsAddingMaterial(false);
     fetchAll();
@@ -2492,6 +2600,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [company, setCompany] = useState<Company | null>(null);
+  const [showCompanyReg, setShowCompanyReg] = useState(false);
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
@@ -2510,6 +2620,8 @@ export default function App() {
         fetchProfile(session.user.email!);
       } else {
         setUser(null);
+        setCompany(null);
+        setShowCompanyReg(false);
         setAuthReady(true);
       }
     });
@@ -2525,21 +2637,50 @@ export default function App() {
       .single();
 
     if (!error && data) {
-      setUser(data as User);
+      const profile = data as User;
+      setUser(profile);
+
+      // Fetch company info if the user belongs to one
+      if (profile.company_id) {
+        const { data: companyData } = await supabase
+          .from('companies')
+          .select('id, name')
+          .eq('id', profile.company_id)
+          .single();
+        if (companyData) setCompany(companyData as Company);
+      } else {
+        // User has no company — show the registration modal
+        setShowCompanyReg(true);
+      }
     } else {
       // Fallback if profile not found
       setUser({
         id: 0,
         name: email.split('@')[0],
         email: email,
-        role: 'foreman'
+        role: 'foreman',
       });
+      setShowCompanyReg(true);
     }
     setAuthReady(true);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+  };
+
+  const handleCompanyRegistered = async (companyId: string) => {
+    // Update user state with the new company_id
+    setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
+    setShowCompanyReg(false);
+
+    // Fetch the company record to display its name
+    const { data: companyData } = await supabase
+      .from('companies')
+      .select('id, name')
+      .eq('id', companyId)
+      .single();
+    if (companyData) setCompany(companyData as Company);
   };
 
   if (!authReady) {
@@ -2555,16 +2696,27 @@ export default function App() {
   }
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }} user={user} onLogout={handleLogout}>
-      {activeTab === 'jobs' && (
-        selectedJobId ? (
-          <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
-        ) : (
-          <Dashboard onSelectJob={setSelectedJobId} user={user} />
-        )
+    <>
+      {showCompanyReg && (
+        <CompanyRegistration user={user} onComplete={handleCompanyRegistered} />
       )}
-      {activeTab === 'users' && user.role === 'admin' && <UserManagement />}
-      {activeTab === 'settings' && user.role === 'admin' && <Settings />}
-    </Layout>
+      <Layout
+        activeTab={activeTab}
+        setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }}
+        user={user}
+        companyName={company?.name || ''}
+        onLogout={handleLogout}
+      >
+        {activeTab === 'jobs' && (
+          selectedJobId ? (
+            <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
+          ) : (
+            <Dashboard onSelectJob={setSelectedJobId} user={user} />
+          )
+        )}
+        {activeTab === 'users' && user.role === 'admin' && <UserManagement />}
+        {activeTab === 'settings' && user.role === 'admin' && <Settings user={user} />}
+      </Layout>
+    </>
   );
 }
