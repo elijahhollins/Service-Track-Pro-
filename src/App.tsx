@@ -129,16 +129,40 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
         if (authError) throw authError;
 
         if (authData.user) {
-          // 2. Create profile + company via secure RPC (handles RLS bootstrap)
-          const { error: regError } = await supabase.rpc('register_with_company', {
-            p_user_name: name || email.split('@')[0],
-            p_company_name: companyName.trim(),
-          });
+          if (authData.session) {
+            // Session is immediately available (email confirmation disabled).
+            // 2. Create profile + company via secure RPC (handles RLS bootstrap)
+            const { data: rpcData, error: regError } = await supabase.rpc('register_with_company', {
+              p_user_name: name || email.split('@')[0],
+              p_company_name: companyName.trim(),
+            });
 
-          if (regError) console.error('Registration error:', regError);
-
-          setError('Account created! You can now sign in.');
-          setIsSignUp(false);
+            if (regError) {
+              console.error('Registration error:', regError);
+              setError('Account created but company setup failed: ' + regError.message);
+            } else {
+              // Fetch the newly created profile and log the user in directly.
+              // This avoids the race condition where onAuthStateChange fires
+              // before the profile is created and shows the company modal.
+              const { data: profile } = await supabase
+                .from('users')
+                .select('*')
+                .eq('email', email)
+                .single();
+              if (profile) {
+                onLogin(profile as User);
+              } else {
+                setError('Account created! You can now sign in.');
+                setIsSignUp(false);
+              }
+            }
+          } else {
+            // Email confirmation is required — the session won't be available
+            // until the user clicks the confirmation link.  The company modal
+            // will appear automatically on first login.
+            setError('Account created! Please check your email to confirm your account before signing in.');
+            setIsSignUp(false);
+          }
         }
       } else {
         // Sign in
@@ -2596,6 +2620,14 @@ const UserManagement = () => {
 
 // --- Main App ---
 
+// How long (ms) to wait before retrying a profile fetch when the row hasn't
+// been written yet (covers the sign-up race condition where onAuthStateChange
+// fires before register_with_company finishes inserting the profile).
+const PROFILE_FETCH_RETRY_DELAY_MS = 800;
+// Maximum number of times fetchProfile will query the DB before giving up and
+// showing the company-registration modal.
+const MAX_PROFILE_FETCH_ATTEMPTS = 2;
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
@@ -2603,6 +2635,23 @@ export default function App() {
   const [company, setCompany] = useState<Company | null>(null);
   const [showCompanyReg, setShowCompanyReg] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+
+  // Safety-net: if the user gains a company_id (e.g. because register_with_company
+  // completed after the modal was shown), automatically dismiss the modal and
+  // load the company details.
+  useEffect(() => {
+    if (user?.company_id && showCompanyReg) {
+      setShowCompanyReg(false);
+      if (!company) {
+        supabase
+          .from('companies')
+          .select('id, name')
+          .eq('id', user.company_id)
+          .single()
+          .then(({ data }) => { if (data) setCompany(data as Company); });
+      }
+    }
+  }, [user?.company_id, showCompanyReg, company]);
 
   useEffect(() => {
     // Check initial session
@@ -2630,11 +2679,24 @@ export default function App() {
   }, []);
 
   const fetchProfile = async (email: string) => {
-    const { data, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
+    let data: User | null = null;
+    let error: unknown = null;
+
+    // Attempt the fetch; if no profile is found on the first try (e.g. because
+    // register_with_company is still running in the sign-up flow), wait briefly
+    // and retry once before falling back to the company-registration modal.
+    for (let attempt = 0; attempt < MAX_PROFILE_FETCH_ATTEMPTS; attempt++) {
+      const result = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single();
+      data = result.data as User | null;
+      error = result.error;
+
+      if (!error && data?.company_id) break;          // success — profile + company found
+      if (attempt < MAX_PROFILE_FETCH_ATTEMPTS - 1) await new Promise(r => setTimeout(r, PROFILE_FETCH_RETRY_DELAY_MS));
+    }
 
     if (!error && data) {
       const profile = data as User;
@@ -2653,7 +2715,7 @@ export default function App() {
         setShowCompanyReg(true);
       }
     } else {
-      // Fallback if profile not found
+      // Fallback if profile not found after retrying
       setUser({
         id: 0,
         name: email.split('@')[0],
@@ -2670,9 +2732,25 @@ export default function App() {
   };
 
   const handleCompanyRegistered = async (companyId: string) => {
-    // Update user state with the new company_id
-    setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
     setShowCompanyReg(false);
+
+    // Re-fetch the full profile so user.id and all fields are correct
+    // (the fallback user created when no profile was found has id=0).
+    const email = user?.email;
+    if (email) {
+      const { data: profile } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single();
+      if (profile) {
+        setUser(profile as User);
+      } else {
+        setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
+      }
+    } else {
+      setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
+    }
 
     // Fetch the company record to display its name
     const { data: companyData } = await supabase
