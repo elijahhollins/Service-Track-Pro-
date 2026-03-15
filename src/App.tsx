@@ -2734,11 +2734,28 @@ export default function App() {
   const handleCompanyRegistered = async (companyId: string, role: string) => {
     setShowCompanyReg(false);
 
-    // Update state directly with the companyId and role returned by the RPC.
-    // Avoid calling fetchProfile here: if the DB hasn't fully committed the
-    // company_id yet, fetchProfile would set showCompanyReg back to true and
-    // cause the registration modal to reappear.
+    // Immediately apply the role/company from the RPC so the UI updates without
+    // waiting for the profile re-fetch below.
     setUser(prev => prev ? { ...prev, company_id: companyId, role } : prev);
+
+    // Re-fetch the full profile to replace any fallback state (e.g. id:0) with
+    // the real database row that register_with_company just created/updated.
+    // Only replace the user state when the profile already has company_id set —
+    // this guards against the race condition where the DB hasn't committed yet,
+    // which would otherwise trigger showCompanyReg = true again.
+    if (user?.email) {
+      const { data: profileData, error: profileError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', user.email)
+        .single();
+      if (profileError) {
+        console.warn('Could not re-fetch profile after company registration:', profileError.message);
+      } else if (profileData && (profileData as User).company_id) {
+        setUser(profileData as User);
+      }
+    }
+
     const { data: companyData } = await supabase
       .from('companies')
       .select('id, name')
