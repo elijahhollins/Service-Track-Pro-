@@ -2605,25 +2605,23 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
-    // Check initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        fetchProfile(session.user.email!);
-      } else {
-        setAuthReady(true);
-      }
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        fetchProfile(session.user.email!);
-      } else {
+    // onAuthStateChange fires INITIAL_SESSION on mount (equivalent to getSession),
+    // so we only subscribe once here to avoid double-calling fetchProfile.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+        if (session?.user) {
+          fetchProfile(session.user.email!);
+        } else {
+          setAuthReady(true);
+        }
+      } else if (event === 'SIGNED_OUT') {
         setUser(null);
         setCompany(null);
         setShowCompanyReg(false);
         setAuthReady(true);
       }
+      // TOKEN_REFRESHED and other events are intentionally ignored to prevent
+      // the company-setup modal from re-appearing mid-session.
     });
 
     return () => subscription.unsubscribe();
@@ -2642,6 +2640,7 @@ export default function App() {
 
       // Fetch company info if the user belongs to one
       if (profile.company_id) {
+        setShowCompanyReg(false);
         const { data: companyData } = await supabase
           .from('companies')
           .select('id, name')
@@ -2670,17 +2669,23 @@ export default function App() {
   };
 
   const handleCompanyRegistered = async (companyId: string) => {
-    // Update user state with the new company_id
-    setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
     setShowCompanyReg(false);
 
-    // Fetch the company record to display its name
-    const { data: companyData } = await supabase
-      .from('companies')
-      .select('id, name')
-      .eq('id', companyId)
-      .single();
-    if (companyData) setCompany(companyData as Company);
+    // Re-fetch the full profile from the database to confirm company_id was
+    // persisted, then load the company record for the nav bar.
+    const currentUser = user;
+    if (currentUser?.email) {
+      await fetchProfile(currentUser.email);
+    } else {
+      // Fallback: update state directly if email is unavailable
+      setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('id, name')
+        .eq('id', companyId)
+        .single();
+      if (companyData) setCompany(companyData as Company);
+    }
   };
 
   if (!authReady) {
