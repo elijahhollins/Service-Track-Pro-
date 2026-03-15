@@ -839,10 +839,15 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
   const [matchHours, setMatchHours] = useState(true);
   const [crewHours, setCrewHours] = useState(8);
   const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(false);
+  const [materialMenuPos, setMaterialMenuPos] = useState({ top: 0, right: 0 });
   
   const [selectedEmployees, setSelectedEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>([]);
   const [selectedMaterials, setSelectedMaterials] = useState<{ materialId?: number; name: string; quantity: number; unitPrice: number }[]>([]);
+
+  const materialBtnRef = useRef<HTMLButtonElement>(null);
+  const formScrollRef = useRef<HTMLFormElement>(null);
+  const materialsEndRef = useRef<HTMLDivElement>(null);
 
   const applyTemplate = (template: Template) => {
     setSelectedEmployees(template.data.employees);
@@ -862,8 +867,23 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
     setSelectedEquipment([...selectedEquipment, { equipmentId: id, hours: crewHours, rate: eq.hourly_rate }]);
   };
 
+  const handleOpenMaterialMenu = () => {
+    if (materialBtnRef.current) {
+      const rect = materialBtnRef.current.getBoundingClientRect();
+      setMaterialMenuPos({
+        top: rect.bottom + 8,
+        right: window.innerWidth - rect.right,
+      });
+    }
+    setIsMaterialMenuOpen(v => !v);
+  };
+
   const handleAddMaterial = (mat: Material) => {
-    setSelectedMaterials([...selectedMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
+    setSelectedMaterials(prev => [...prev, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
+    // Delay slightly to let React render the new item before scrolling to it
+    setTimeout(() => {
+      materialsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 50);
   };
 
   useEffect(() => {
@@ -906,7 +926,7 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0 p-8 space-y-10">
+        <form ref={formScrollRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0 p-8 space-y-10">
           {/* Header Info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
@@ -1067,8 +1087,9 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                 </h4>
                 <div className="relative">
                   <button 
+                    ref={materialBtnRef}
                     type="button" 
-                    onClick={() => setIsMaterialMenuOpen(!isMaterialMenuOpen)}
+                    onClick={handleOpenMaterialMenu}
                     className="text-xs font-bold text-slate-900 bg-slate-100 px-3 py-1.5 rounded border border-slate-200 flex items-center gap-2 hover:bg-slate-200 transition-colors"
                   >
                     <Plus className="w-3 h-3" /> Add Material
@@ -1076,14 +1097,18 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                   <AnimatePresence>
                     {isMaterialMenuOpen && (
                       <>
-                        <div className="fixed inset-0 z-10" onClick={() => setIsMaterialMenuOpen(false)} />
+                        {/* z-[55]/z-[60]: above the modal's z-50, backdrop below dropdown */}
+                        <div className="fixed inset-0 z-[55]" onClick={() => setIsMaterialMenuOpen(false)} />
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 10 }}
-                          className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-64 overflow-auto"
+                          style={{ top: materialMenuPos.top, right: materialMenuPos.right }}
+                          className="fixed w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-[60] max-h-64 overflow-y-auto"
                         >
-                          {materials.map(m => (
+                          {materials.length === 0 ? (
+                            <p className="px-4 py-3 text-sm text-slate-400">No materials found.</p>
+                          ) : materials.map(m => (
                             <button 
                               key={m.id}
                               type="button"
@@ -1132,6 +1157,7 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                     </button>
                   </div>
                 ))}
+                <div ref={materialsEndRef} />
               </div>
             </section>
           </div>
@@ -1546,11 +1572,10 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 overflow-y-auto">
-      <div className="w-full max-w-5xl mx-auto py-8 px-4">
-
-        {/* Toolbar */}
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6 text-white print:hidden">
+    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex flex-col">
+      {/* Toolbar — always visible, never scrolls away */}
+      <div className="flex-shrink-0 w-full max-w-5xl mx-auto pt-6 pb-4 px-4 print:hidden">
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 text-white">
           <h3 className="text-xl sm:text-2xl font-bold font-display">Invoice Preview</h3>
           <div className="flex flex-wrap gap-2">
             <button
@@ -1573,6 +1598,11 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
             <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 text-sm">Close</button>
           </div>
         </div>
+      </div>
+
+      {/* Scrollable invoice content */}
+      <div className="flex-1 overflow-y-auto">
+      <div className="w-full max-w-5xl mx-auto pb-8 px-4">
 
         {/* PDF error banner */}
         {pdfError && (
@@ -1868,6 +1898,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose }: {
           {/* Bottom Color Bar */}
           <div className="h-2 bg-brand rounded-b-lg print:rounded-none" />
         </div>
+      </div>
       </div>
     </div>
   );
