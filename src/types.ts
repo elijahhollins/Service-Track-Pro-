@@ -1,20 +1,29 @@
+export interface Company {
+  id: string;
+  name: string;
+  created_at?: string;
+}
+
 export interface Employee {
   id?: number;
   name: string;
   role: string;
   hourly_rate: number;
+  company_id?: string;
 }
 
 export interface Equipment {
   id?: number;
   name: string;
   hourly_rate: number;
+  company_id?: string;
 }
 
 export interface Material {
   id?: number;
   name: string;
   unit_price: number;
+  company_id?: string;
 }
 
 export interface WorkLogEntry {
@@ -29,6 +38,7 @@ export interface WorkLog {
   date: string;
   notes: string;
   data: WorkLogEntry;
+  company_id?: string;
 }
 
 export interface User {
@@ -36,6 +46,7 @@ export interface User {
   name: string;
   email: string;
   role: 'admin' | 'foreman';
+  company_id?: string;
 }
 
 export interface Job {
@@ -50,12 +61,14 @@ export interface Job {
   status: 'active' | 'completed';
   foreman_id?: number;
   logs?: WorkLog[];
+  company_id?: string;
 }
 
 export interface Template {
   id?: number;
   name: string;
   data: WorkLogEntry;
+  company_id?: string;
 }
 
 export interface CompanySettings {
