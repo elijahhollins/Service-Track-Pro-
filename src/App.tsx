@@ -301,7 +301,7 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
 };
 
 // --- Company Registration Modal (shown when user has no company_id) ---
-const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (companyId: string) => void }) => {
+const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (companyId: string, role: string) => void }) => {
   const [companyName, setCompanyName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -320,9 +320,10 @@ const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (co
 
       if (rpcError) throw rpcError;
 
-      const companyId = (data as { company_id: string })?.company_id;
+      const rpcResult = data as { company_id: string; role: string } | null;
+      const companyId = rpcResult?.company_id;
       if (companyId) {
-        onComplete(companyId);
+        onComplete(companyId, rpcResult?.role ?? 'foreman');
       } else {
         throw new Error('Unexpected response from server.');
       }
@@ -2730,23 +2731,20 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const handleCompanyRegistered = async (companyId: string) => {
+  const handleCompanyRegistered = async (companyId: string, role: string) => {
     setShowCompanyReg(false);
 
-    // Re-fetch the full profile from the database to confirm company_id was
-    // persisted, then load the company record for the nav bar.
-    if (user?.email) {
-      await fetchProfile(user.email);
-    } else {
-      // Fallback: update state directly if email is unavailable
-      setUser(prev => prev ? { ...prev, company_id: companyId } : prev);
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('id, name')
-        .eq('id', companyId)
-        .single();
-      if (companyData) setCompany(companyData as Company);
-    }
+    // Update state directly with the companyId and role returned by the RPC.
+    // Avoid calling fetchProfile here: if the DB hasn't fully committed the
+    // company_id yet, fetchProfile would set showCompanyReg back to true and
+    // cause the registration modal to reappear.
+    setUser(prev => prev ? { ...prev, company_id: companyId, role } : prev);
+    const { data: companyData } = await supabase
+      .from('companies')
+      .select('id, name')
+      .eq('id', companyId)
+      .single();
+    if (companyData) setCompany(companyData as Company);
   };
 
   if (!authReady) {
