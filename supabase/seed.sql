@@ -69,10 +69,12 @@ BEGIN
 END $$;
 
 -- Public user profiles (linked to auth users by email)
-INSERT INTO public.users (name, email, password, role)
+-- Passwords are managed exclusively by Supabase Auth (auth.users); do NOT
+-- store them in public.users.
+INSERT INTO public.users (name, email, role)
 VALUES
-  ('Alice Johnson',  'admin@demo.com',   'Demo1234!', 'admin'),
-  ('Bob Martinez',   'foreman@demo.com', 'Demo1234!', 'foreman')
+  ('Alice Johnson',  'admin@demo.com',   'admin'),
+  ('Bob Martinez',   'foreman@demo.com', 'foreman')
 ON CONFLICT (email) DO NOTHING;
 
 -- -----------------------------------------------------------------------------

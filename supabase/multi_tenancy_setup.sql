@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS public.companies (
 ALTER TABLE public.users
     ADD COLUMN IF NOT EXISTS company_id uuid REFERENCES public.companies(id);
 
+-- Remove the password column from public.users: Supabase Auth stores
+-- passwords in auth.users (encrypted_password).  Keeping a plaintext
+-- or hashed copy here violates the principle of least privilege and
+-- causes register_with_company() to fail with a NOT NULL violation.
+ALTER TABLE public.users DROP COLUMN IF EXISTS password;
+
 -- jobs — every job belongs to a company
 ALTER TABLE public.jobs
     ADD COLUMN IF NOT EXISTS company_id uuid REFERENCES public.companies(id);
