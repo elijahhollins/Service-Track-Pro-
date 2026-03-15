@@ -2673,9 +2673,8 @@ export default function App() {
 
     // Re-fetch the full profile from the database to confirm company_id was
     // persisted, then load the company record for the nav bar.
-    const currentUser = user;
-    if (currentUser?.email) {
-      await fetchProfile(currentUser.email);
+    if (user?.email) {
+      await fetchProfile(user.email);
     } else {
       // Fallback: update state directly if email is unavailable
       setUser(prev => prev ? { ...prev, company_id: companyId } : prev);

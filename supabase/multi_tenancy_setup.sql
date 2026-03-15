@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS public.companies (
 ALTER TABLE public.users
     ADD COLUMN IF NOT EXISTS company_id uuid REFERENCES public.companies(id);
 
+-- Authentication is handled by Supabase Auth (auth.users); the legacy
+-- password column in public.users is not needed for new sign-ups.
+-- Drop the NOT NULL constraint so register_with_company can insert
+-- profiles without it.
+ALTER TABLE public.users
+    ALTER COLUMN password DROP NOT NULL;
+
 -- jobs — every job belongs to a company
 ALTER TABLE public.jobs
     ADD COLUMN IF NOT EXISTS company_id uuid REFERENCES public.companies(id);
