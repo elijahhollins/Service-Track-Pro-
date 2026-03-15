@@ -122,9 +122,10 @@ $$;
 -- freely read/write users and companies during bootstrap.
 --
 -- Logic:
---   • If p_company_name matches an existing company  → join it as foreman
---   • If p_company_name is new                       → create it, join as admin
---   • If the public.users row already exists         → update company_id only
+--   • If the user already has a company_id               → return it immediately (idempotent)
+--   • If p_company_name matches an existing company      → join it as foreman
+--   • If p_company_name is new                           → create it, join as admin
+--   • If the public.users row already exists             → update company_id and role
 CREATE OR REPLACE FUNCTION public.register_with_company(
     p_user_name    text,
     p_company_name text
@@ -136,6 +137,7 @@ DECLARE
   v_company_id   uuid;
   v_role         text;
   v_existing_uid int;
+  v_existing_cid uuid;
 BEGIN
   -- Resolve the calling user's email from the Supabase Auth session
   SELECT email INTO v_auth_email
@@ -144,6 +146,21 @@ BEGIN
 
   IF v_auth_email IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Check if the user already has a profile with a company assigned.
+  -- If so, return it immediately — no need to create a new company.
+  SELECT id, company_id INTO v_existing_uid, v_existing_cid
+  FROM   public.users
+  WHERE  email = v_auth_email;
+
+  IF v_existing_uid IS NOT NULL AND v_existing_cid IS NOT NULL THEN
+    -- User is already fully registered; determine their current role
+    SELECT role INTO v_role FROM public.users WHERE id = v_existing_uid;
+    RETURN json_build_object(
+      'company_id', v_existing_cid::text,
+      'role',       v_role
+    );
   END IF;
 
   -- Find or create the company
@@ -163,15 +180,11 @@ BEGIN
     v_role := 'admin';
   END IF;
 
-  -- Check if a public.users profile already exists for this email
-  SELECT id INTO v_existing_uid
-  FROM   public.users
-  WHERE  email = v_auth_email;
-
   IF v_existing_uid IS NOT NULL THEN
     -- Profile exists (e.g. legacy row without company_id) — update it
     UPDATE public.users
-    SET    company_id = v_company_id
+    SET    company_id = v_company_id,
+           role       = v_role
     WHERE  id         = v_existing_uid
       AND  company_id IS NULL;
   ELSE
