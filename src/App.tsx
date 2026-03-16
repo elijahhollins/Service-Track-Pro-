@@ -2621,20 +2621,14 @@ const Settings = ({ user }: { user: User }) => {
     setGeneratedLink('');
 
     try {
-      const { data: invData, error: insertError } = await supabase
-        .from('invitations')
-        .insert({
-          email: inviteEmail.trim().toLowerCase(),
-          company_id: user.company_id,
-          role: inviteRole,
-          invited_by: user.id,
-        })
-        .select('invite_token')
-        .single();
+      const { data: invitationData, error: rpcError } = await supabase.rpc('create_invitation', {
+        p_email: inviteEmail.trim().toLowerCase(),
+        p_role: inviteRole,
+      });
 
-      if (insertError) throw insertError;
+      if (rpcError) throw rpcError;
 
-      const token = (invData as Invitation).invite_token;
+      const token = (invitationData as { invite_token: string }).invite_token;
       const inviteUrl = `${window.location.origin}/?invite=${token}`;
       setGeneratedLink(inviteUrl);
       setInviteEmail('');
