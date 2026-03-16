@@ -29,7 +29,10 @@ import {
   Edit3,
   Save,
   UserPlus,
-  Send
+  Send,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Company, CompanySettings, CustomerDetails, InvoiceDetails, Invitation } from './types';
@@ -232,6 +235,162 @@ const Login = () => {
             New to the platform? Contact your administrator to receive an invitation.
           </p>
         </div>
+      </motion.div>
+    </div>
+  );
+};
+
+// --- Invite Signup Page (shown when a valid ?invite=<token> URL is opened) ---
+// The user signs up directly with name + password; no email step.
+const InviteSignup = ({
+  invitation,
+  onComplete,
+}: {
+  invitation: Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>;
+  onComplete: (companyId: string, role: string, emailOverride: string) => void;
+}) => {
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+
+    try {
+      // Create the auth account. If the email is already registered the admin
+      // should revoke the old invitation and ask the user to sign in directly.
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: invitation.email,
+        password,
+      });
+
+      if (signUpError) throw signUpError;
+
+      // Accept the invitation — creates the profile row
+      const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
+        p_user_name: name.trim(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = rpcData as { company_id: string; role: string } | null;
+      if (result?.company_id) {
+        onComplete(result.company_id, result.role, invitation.email);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
+      >
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+            <UserPlus className="w-6 h-6 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900">Create Your Account</h2>
+          <p className="text-slate-500 text-sm text-center mt-1">
+            You've been invited as <strong className="capitalize">{invitation.role}</strong>. Set up your account to get started.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+            <input
+              type="text"
+              required
+              autoFocus
+              className="input-field"
+              placeholder="John Doe"
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+            <input
+              type="email"
+              disabled
+              className="input-field opacity-60 cursor-not-allowed"
+              value={invitation.email}
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                className="input-field pl-10 pr-10"
+                placeholder="Min. 8 characters"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                onClick={() => setShowPassword(v => !v)}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Confirm Password</label>
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                className="input-field pl-10 pr-10"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+            {loading ? 'Creating account…' : 'Create Account'}
+          </button>
+        </form>
       </motion.div>
     </div>
   );
@@ -2865,13 +3024,12 @@ export default function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null); // authenticated email (may have no profile yet)
   const [company, setCompany] = useState<Company | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  // Invite-link flow: when ?invite=<token> is in the URL and not yet signed-in
-  const [inviteLinkEmail, setInviteLinkEmail] = useState<string | null>(null);
-  const [inviteLinkSent, setInviteLinkSent] = useState(false);
+  // Invite-link flow: set when a valid ?invite=<token> is detected; cleared on auth
+  const [pendingInvitation, setPendingInvitation] = useState<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'> | null>(null);
 
   // On mount: check for ?invite=<token> in the URL.
   // If found and the user is not yet authenticated, look up the invitation and
-  // send a magic link to the invitee's email so they can sign in.
+  // show the InviteSignup page directly (no email step).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const inviteToken = params.get('invite');
@@ -2882,27 +3040,18 @@ export default function App() {
     window.history.replaceState({}, '', pathWithoutQuery);
 
     const handleInviteToken = async () => {
+      // Skip if user is already authenticated
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session) return;
+
       const { data } = await supabase.rpc('get_invitation_by_token', {
         p_token: inviteToken,
       });
 
       const rows = data as Array<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>> | null;
       const inv = rows?.[0];
-      if (!inv?.email) return; // token invalid or already accepted
-
-      // Check if there's already an active session — user may have already signed in
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData?.session) return; // already authenticated; onAuthStateChange handles the rest
-
-      // Send the magic link to the invitee's email
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: inv.email,
-        options: { shouldCreateUser: true },
-      });
-
-      if (!otpError) {
-        setInviteLinkEmail(inv.email);
-        setInviteLinkSent(true);
+      if (inv?.email) {
+        setPendingInvitation(inv);
       }
     };
 
@@ -2935,8 +3084,8 @@ export default function App() {
   const fetchProfile = async (email: string) => {
     // Always record the authenticated email so AccountSetup can use it
     setUserEmail(email);
-    // Clear invite-link state once the user is authenticated
-    setInviteLinkSent(false);
+    // Clear pending invite once the user is authenticated
+    setPendingInvitation(null);
 
     const { data, error } = await supabase
       .from('users')
@@ -2967,22 +3116,27 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const handleAccountSetupComplete = async (companyId: string, role: string) => {
-    if (!userEmail) return;
+  const handleAccountSetupComplete = async (companyId: string, role: string, emailOverride?: string) => {
+    const email = emailOverride ?? userEmail;
+    if (!email) return;
 
     // Re-fetch the full profile now that accept_invitation has created it
     const { data: profileData } = await supabase
       .from('users')
       .select('*')
-      .eq('email', userEmail)
+      .eq('email', email)
       .single();
 
     if (profileData) {
       setUser(profileData as User);
+      setUserEmail(email);
     } else {
       // Fallback: build minimal profile from what we know
-      setUser({ id: 0, name: userEmail.split('@')[0], email: userEmail, role: role as User['role'], company_id: companyId });
+      setUser({ id: 0, name: email.split('@')[0], email, role: role as User['role'], company_id: companyId });
+      setUserEmail(email);
     }
+
+    setPendingInvitation(null);
 
     const { data: companyData } = await supabase
       .from('companies')
@@ -2990,32 +3144,16 @@ export default function App() {
       .eq('id', companyId)
       .single();
     if (companyData) setCompany(companyData as Company);
+    setAuthReady(true);
   };
 
-  // Invite-link flow: show "check your email" page before auth is resolved
-  if (inviteLinkSent && !userEmail) {
+  // Invite-link flow: show the direct signup page before auth is resolved
+  if (pendingInvitation && !userEmail) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
-        >
-          <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Mail className="w-7 h-7 text-emerald-600" />
-          </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Check Your Email</h2>
-          <p className="text-slate-500 text-sm mb-6">
-            We sent a magic sign-in link to <strong>{inviteLinkEmail}</strong>. Click the link to complete your account setup.
-          </p>
-          <button
-            onClick={() => setInviteLinkSent(false)}
-            className="text-sm text-brand font-medium hover:underline"
-          >
-            Sign in with a different method
-          </button>
-        </motion.div>
-      </div>
+      <InviteSignup
+        invitation={pendingInvitation}
+        onComplete={handleAccountSetupComplete}
+      />
     );
   }
 
