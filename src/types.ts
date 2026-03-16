@@ -1,29 +1,29 @@
 export interface Company {
-  id: string;
+  id: number;
   name: string;
   created_at?: string;
 }
 
 export interface Employee {
   id?: number;
+  company_id: number;
   name: string;
   role: string;
   hourly_rate: number;
-  company_id?: string;
 }
 
 export interface Equipment {
   id?: number;
+  company_id: number;
   name: string;
   hourly_rate: number;
-  company_id?: string;
 }
 
 export interface Material {
   id?: number;
+  company_id: number;
   name: string;
   unit_price: number;
-  company_id?: string;
 }
 
 export interface WorkLogEntry {
@@ -38,30 +38,19 @@ export interface WorkLog {
   date: string;
   notes: string;
   data: WorkLogEntry;
-  company_id?: string;
 }
 
 export interface User {
-  id: number;
+  id: string;
+  company_id: number | null;
   name: string;
   email: string;
-  role: 'super_admin' | 'admin' | 'foreman' | 'crew';
-  company_id?: string;
-}
-
-export interface Invitation {
-  id: string;
-  email: string;
-  company_id: string;
-  role: 'admin' | 'foreman' | 'crew';
-  invited_by?: number;
-  invite_token: string;
-  accepted_at?: string;
-  created_at: string;
+  role: 'super_admin' | 'admin' | 'foreman';
 }
 
 export interface Job {
   id?: number;
+  company_id: number;
   customer_name: string;
   job_name: string;
   job_number: string;
@@ -70,39 +59,40 @@ export interface Job {
   end_date: string;
   notes: string;
   status: 'active' | 'completed';
-  foreman_id?: number;
+  foreman_id?: string;
   logs?: WorkLog[];
-  company_id?: string;
 }
 
 export interface Template {
   id?: number;
+  company_id: number;
   name: string;
   data: WorkLogEntry;
-  company_id?: string;
 }
 
-export interface CompanySettings {
-  name: string;
-  address: string;
-  city: string;
-  phone: string;
-  email: string;
-  website: string;
-  logo: string;
-  paymentTerms: string;
+export interface Invitation {
+  id: string;
+  company_id: number | null;
+  role: 'admin' | 'foreman';
+  token: string;
+  email?: string;
+  created_at: string;
+  expires_at: string;
+  used_at?: string;
 }
 
-export interface CustomerDetails {
-  phone: string;
-  email: string;
-  billToAddress: string;
-}
-
-export interface InvoiceDetails {
-  invoiceNumber: string;
-  invoiceDate: string;
-  dueDate: string;
-  dateOfOrder: string;
-  jobLocation: string;
+export interface Invoice {
+  id?: number;
+  company_id: number;
+  job_id: number;
+  invoice_number: string;
+  date: string;
+  due_date: string;
+  status: 'draft' | 'sent' | 'paid';
+  labor_total: number;
+  equipment_total: number;
+  material_total: number;
+  grand_total: number;
+  data: any;
+  created_at?: string;
 }

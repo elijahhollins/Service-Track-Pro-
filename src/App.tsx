@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Briefcase, 
   Calendar, 
@@ -20,96 +20,53 @@ import {
   X,
   MoreVertical,
   Filter,
-  Building2,
-  Upload,
-  Phone,
-  Mail,
-  MapPin,
-  Globe,
-  Edit3,
-  Save,
-  UserPlus,
-  Send,
-  Lock,
-  Eye,
-  EyeOff
+  Shield,
+  Link as LinkIcon,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Company, CompanySettings, CustomerDetails, InvoiceDetails, Invitation } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice } from './types';
 import { supabase } from './supabase';
-
-// --- LocalStorage Helpers ---
-const COMPANY_SETTINGS_KEY = 'stp_company_settings';
-const customerDetailsKey = (jobId: string | number) => `stp_customer_${jobId}`;
-const invoiceDetailsKey = (jobId: string | number) => `stp_invoice_${jobId}`;
-
-const defaultCompanySettings: CompanySettings = {
-  name: 'Service Track Pro',
-  address: '123 Service Way',
-  city: 'Springfield, ST 55555',
-  phone: '(555) 123-4567',
-  email: 'billing@servicetrackpro.com',
-  website: 'www.servicetrackpro.com',
-  logo: '',
-  paymentTerms: 'Payment is due within 30 days of invoice date.',
-};
-
-function loadCompanySettings(): CompanySettings {
-  try {
-    const raw = localStorage.getItem(COMPANY_SETTINGS_KEY);
-    return raw ? { ...defaultCompanySettings, ...JSON.parse(raw) } : { ...defaultCompanySettings };
-  } catch {
-    return { ...defaultCompanySettings };
-  }
-}
-
-function saveCompanySettings(settings: CompanySettings) {
-  localStorage.setItem(COMPANY_SETTINGS_KEY, JSON.stringify(settings));
-}
-
-function loadCustomerDetails(jobId: string | number): CustomerDetails {
-  try {
-    const raw = localStorage.getItem(customerDetailsKey(jobId));
-    return raw ? JSON.parse(raw) : { phone: '', email: '', billToAddress: '' };
-  } catch {
-    return { phone: '', email: '', billToAddress: '' };
-  }
-}
-
-function saveCustomerDetails(jobId: string | number, details: CustomerDetails) {
-  localStorage.setItem(customerDetailsKey(jobId), JSON.stringify(details));
-}
-
-function loadInvoiceDetails(jobId: string | number, job: Job): InvoiceDetails {
-  try {
-    const raw = localStorage.getItem(invoiceDetailsKey(jobId));
-    if (raw) return JSON.parse(raw);
-  } catch { /* ignore */ }
-  const today = new Date();
-  const dueDate = new Date(today);
-  dueDate.setDate(dueDate.getDate() + 30);
-  return {
-    invoiceNumber: `INV-${job.job_number || jobId}`,
-    invoiceDate: today.toISOString().split('T')[0],
-    dueDate: dueDate.toISOString().split('T')[0],
-    dateOfOrder: job.start_date || today.toISOString().split('T')[0],
-    jobLocation: job.address || '',
-  };
-}
-
-function saveInvoiceDetails(jobId: string | number, details: InvoiceDetails) {
-  localStorage.setItem(invoiceDetailsKey(jobId), JSON.stringify(details));
-}
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 // --- Components ---
 
-const Login = () => {
+const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [useMagicLink, setUseMagicLink] = useState(false);
-  const [magicLinkSent, setMagicLinkSent] = useState(false);
+  const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [invitation, setInvitation] = useState<Invitation | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (token) {
+      fetchInvitation(token);
+    }
+  }, []);
+
+  const fetchInvitation = async (token: string) => {
+    const { data, error } = await supabase
+      .from('invitations')
+      .select('*')
+      .eq('token', token)
+      .is('used_at', null)
+      .gt('expires_at', new Date().toISOString())
+      .single();
+
+    if (error || !data) {
+      setError('Invalid or expired invitation link.');
+    } else {
+      setInvitation(data as Invitation);
+      setIsSignUp(true);
+      if (data.email) setEmail(data.email);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,23 +74,90 @@ const Login = () => {
     setError('');
     
     try {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (useMagicLink) {
-        // Send a magic link — onAuthStateChange handles the SIGNED_IN event
-        const { error: otpError } = await supabase.auth.signInWithOtp({
-          email: normalizedEmail,
-          options: { shouldCreateUser: true },
-        });
-        if (otpError) throw otpError;
-        setMagicLinkSent(true);
-      } else {
-        // Sign in with password — onAuthStateChange handles the SIGNED_IN event
-        const { error: authError } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
+      if (isSignUp) {
+        let companyId = invitation?.company_id;
+
+        if (!companyId && invitation?.role === 'admin') {
+          // 1. Create company if it's a new company invitation
+          const { data: companyData, error: companyError } = await supabase
+            .from('companies')
+            .insert([{ name: companyName }])
+            .select()
+            .single();
+
+          if (companyError) throw companyError;
+          companyId = companyData.id;
+        } else if (!companyId && !invitation) {
+          // Legacy sign up or manual sign up (if allowed)
+          const { data: companyData, error: companyError } = await supabase
+            .from('companies')
+            .insert([{ name: companyName }])
+            .select()
+            .single();
+
+          if (companyError) throw companyError;
+          companyId = companyData.id;
+        }
+
+        // 2. Sign up to Supabase Auth
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email,
           password,
         });
+
         if (authError) throw authError;
-        // App state is updated automatically via onAuthStateChange → fetchProfile
+
+        if (authData.user) {
+          // 3. Create profile in public.users
+          const { error: profileError } = await supabase
+            .from('users')
+            .insert([{ 
+              id: authData.user.id,
+              name: name || email.split('@')[0], 
+              email, 
+              password, 
+              role: invitation?.role || 'admin',
+              company_id: companyId
+            }]);
+
+          if (profileError) console.error('Profile creation error:', profileError);
+          
+          // 4. Mark invitation as used
+          if (invitation) {
+            await supabase
+              .from('invitations')
+              .update({ used_at: new Date().toISOString() })
+              .eq('id', invitation.id);
+          }
+
+          setError('Account created! You can now sign in.');
+          setIsSignUp(false);
+          setInvitation(null);
+          // Clear URL params
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      } else {
+        // Sign in
+        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (authError) throw authError;
+
+        if (authData.user) {
+          const { data: profile, error: profileError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .single();
+
+          if (profileError) {
+            setError('Profile not found. Please contact support.');
+          } else {
+            onLogin(profile as User);
+          }
+        }
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred');
@@ -141,32 +165,6 @@ const Login = () => {
       setLoading(false);
     }
   };
-
-  if (magicLinkSent) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
-        >
-          <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Mail className="w-7 h-7 text-emerald-600" />
-          </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Check Your Email</h2>
-          <p className="text-slate-500 text-sm mb-6">
-            We sent a magic sign-in link to <strong>{email}</strong>. Click the link in the email to access your account.
-          </p>
-          <button
-            onClick={() => { setMagicLinkSent(false); setUseMagicLink(false); }}
-            className="text-sm text-brand font-medium hover:underline"
-          >
-            Back to Sign In
-          </button>
-        </motion.div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -180,14 +178,47 @@ const Login = () => {
             <Briefcase className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold font-display text-slate-900">Service Track Pro</h1>
-          <p className="text-slate-500">{useMagicLink ? 'Sign in with a magic link' : 'Sign in to your account'}</p>
+          <p className="text-slate-500">
+            {invitation 
+              ? `Accepting invitation as ${invitation.role}` 
+              : isSignUp ? 'Create your company account' : 'Sign in to your account'}
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+            <div className={`p-3 text-sm rounded-lg border ${error.includes('created') ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
               {error}
             </div>
+          )}
+          
+          {isSignUp && (
+            <>
+              {(!invitation || (invitation.role === 'admin' && !invitation.company_id)) && (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="input-field" 
+                    placeholder="Acme Services"
+                    value={companyName}
+                    onChange={e => setCompanyName(e.target.value)}
+                  />
+                </div>
+              )}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+                <input 
+                  type="text" 
+                  required 
+                  className="input-field" 
+                  placeholder="John Doe"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                />
+              </div>
+            </>
           )}
 
           <div>
@@ -196,825 +227,53 @@ const Login = () => {
               type="email" 
               required 
               className="input-field" 
-              placeholder="you@example.com"
+              placeholder="admin@example.com"
               value={email}
+              readOnly={!!invitation?.email}
               onChange={e => setEmail(e.target.value)}
             />
           </div>
-
-          {!useMagicLink && (
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
-              <input 
-                type="password" 
-                required 
-                className="input-field" 
-                placeholder="••••••••"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-            </div>
-          )}
-
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+            <input 
+              type="password" 
+              required 
+              className="input-field" 
+              placeholder="••••••••"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+            />
+          </div>
           <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
-            {loading ? 'Processing...' : (useMagicLink ? 'Send Magic Link' : 'Sign In')}
+            {loading ? 'Processing...' : (isSignUp ? (invitation ? 'Join Now' : 'Create Company') : 'Sign In')}
           </button>
         </form>
 
-        <div className="mt-6 text-center">
-          <button 
-            onClick={() => { setUseMagicLink(!useMagicLink); setError(''); }}
-            className="text-sm text-brand font-medium hover:underline"
-          >
-            {useMagicLink ? 'Sign in with password instead' : 'Sign in with a magic link'}
-          </button>
-        </div>
-
-        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
-          <p className="text-xs text-slate-400">
-            New to the platform? Sign in or create an account to get started.
-          </p>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
-
-// --- Invite Signup Page (shown when a valid ?invite=<token> URL is opened) ---
-// The user signs up directly with name + password; no email step.
-const InviteSignup = ({
-  invitation,
-  onComplete,
-}: {
-  invitation: Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>;
-  onComplete: (companyId: string, role: string, emailOverride: string) => void;
-}) => {
-  const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
-      return;
-    }
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-
-    try {
-      // Create the auth account. If the email is already registered the admin
-      // should revoke the old invitation and ask the user to sign in directly.
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: invitation.email,
-        password,
-      });
-
-      if (signUpError) throw signUpError;
-
-      if (!signUpData.session) {
-        // Supabase requires email confirmation before a session is issued.
-        // Store the name so fetchProfile can call accept_invitation automatically
-        // after the user clicks the confirmation link and is signed in.
-        localStorage.setItem(
-          'stp_pending_invite_name',
-          JSON.stringify({ email: invitation.email, name: name.trim() }),
-        );
-        setAwaitingConfirmation(true);
-        return;
-      }
-
-      // Session immediately available — accept the invitation now
-      const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
-        p_user_name: name.trim(),
-      });
-
-      if (rpcError) throw rpcError;
-
-      const result = rpcData as { company_id: string; role: string } | null;
-      if (result?.company_id) {
-        onComplete(result.company_id, result.role, invitation.email);
-      } else {
-        throw new Error('Unexpected response from server.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
-      >
-        {awaitingConfirmation ? (
-          <div className="flex flex-col items-center text-center">
-            <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center mb-4">
-              <Mail className="w-6 h-6 text-emerald-600" />
-            </div>
-            <h2 className="text-2xl font-bold font-display text-slate-900">Check Your Email</h2>
-            <p className="text-slate-500 text-sm mt-3">
-              We sent a confirmation link to <strong>{invitation.email}</strong>.
-            </p>
-            <p className="text-slate-500 text-sm mt-2">
-              Click the link in that email to verify your address and complete your account setup automatically.
-            </p>
+        {!invitation && (
+          <div className="mt-6 text-center">
+            <button 
+              onClick={() => setIsSignUp(!isSignUp)}
+              className="text-sm text-brand font-medium hover:underline"
+            >
+              {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+            </button>
           </div>
-        ) : (
-          <>
-            <div className="flex flex-col items-center mb-8">
-              <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-                <UserPlus className="w-6 h-6 text-white" />
-              </div>
-              <h2 className="text-2xl font-bold font-display text-slate-900">Create Your Account</h2>
-              <p className="text-slate-500 text-sm text-center mt-1">
-                You've been invited as <strong className="capitalize">{invitation.role}</strong>. Set up your account to get started.
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {error && (
-                <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-                  {error}
-                </div>
-              )}
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  autoFocus
-                  className="input-field"
-                  placeholder="John Doe"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-                <input
-                  type="email"
-                  disabled
-                  className="input-field opacity-60 cursor-not-allowed"
-                  value={invitation.email}
-                />
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    className="input-field pl-10 pr-10"
-                    placeholder="Min. 8 characters"
-                    value={password}
-                    onChange={e => setPassword(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    onClick={() => setShowPassword(v => !v)}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Confirm Password</label>
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    required
-                    className="input-field pl-10 pr-10"
-                    placeholder="Re-enter your password"
-                    value={confirmPassword}
-                    onChange={e => setConfirmPassword(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
-                {loading ? 'Creating account…' : 'Create Account'}
-              </button>
-            </form>
-          </>
         )}
       </motion.div>
     </div>
   );
 };
 
-// --- Account Setup Page (shown when authenticated user has no company) ---
-const AccountSetup = ({
-  userEmail,
-  onComplete,
-}: {
-  userEmail: string;
-  onComplete: (companyId: string, role: string) => void;
-}) => {
-  const [name, setName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  // Look up a pending invitation for this email when the component mounts
-  useEffect(() => {
-    const fetchInvitation = async () => {
-      const { data } = await supabase
-        .from('invitations')
-        .select('*')
-        .eq('email', userEmail)
-        .is('accepted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      setInvitation((data as Invitation | null) ?? null);
-    };
-    fetchInvitation();
-  }, [userEmail]);
-
-  // Called when the user has a pending invitation
-  const handleAcceptInvitation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      const { data, error: rpcError } = await supabase.rpc('accept_invitation', {
-        p_user_name: name.trim(),
-      });
-
-      if (rpcError) throw rpcError;
-
-      const result = data as { company_id: string; role: string } | null;
-      if (result?.company_id) {
-        onComplete(result.company_id, result.role);
-      } else {
-        throw new Error('Unexpected response from server.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Called when the user has no invitation — self-service registration
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
-        p_user_name: name.trim(),
-        p_company_name: companyName.trim(),
-      });
-
-      if (rpcError) throw rpcError;
-
-      const result = data as { company_id: string; role: string } | null;
-      if (result?.company_id) {
-        onComplete(result.company_id, result.role);
-      } else {
-        throw new Error('Unexpected response from server.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'Registration failed. Please try again or contact support if the problem persists.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
-
-  // Loading state while we check for an invitation
-  if (invitation === undefined) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white font-display text-xl animate-pulse">Loading…</div>
-      </div>
-    );
-  }
-
-  // No invitation found — show self-service registration form
-  if (invitation === null) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
-        >
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-              <UserPlus className="w-6 h-6 text-white" />
-            </div>
-            <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Account</h2>
-            <p className="text-slate-500 text-sm text-center mt-1">
-              Enter your name and company to get started. Creating a new company makes you the admin; entering an existing company name joins it as a foreman.
-            </p>
-          </div>
-
-          <form onSubmit={handleRegister} className="space-y-4">
-            {error && (
-              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-                {error}
-              </div>
-            )}
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-              <input
-                type="text"
-                required
-                autoFocus
-                className="input-field"
-                placeholder="John Doe"
-                value={name}
-                onChange={e => setName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
-              <input
-                type="text"
-                required
-                className="input-field"
-                placeholder="Acme Services"
-                value={companyName}
-                onChange={e => setCompanyName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-              <input
-                type="email"
-                disabled
-                className="input-field opacity-60 cursor-not-allowed"
-                value={userEmail}
-              />
-            </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
-              {loading ? 'Setting up…' : 'Get Started'}
-            </button>
-          </form>
-
-          <div className="pt-4 mt-2 border-t border-slate-100 text-center">
-            <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600">
-              Sign out
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    );
-  }
-
-  // Invitation found — let the user complete their profile
-  return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
-      >
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-            <UserPlus className="w-6 h-6 text-white" />
-          </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900">Complete Your Profile</h2>
-          <p className="text-slate-500 text-sm text-center mt-1">
-            You've been invited as <strong className="capitalize">{invitation.role}</strong>. Enter your name to finish setting up your account.
-          </p>
-        </div>
-
-        <form onSubmit={handleAcceptInvitation} className="space-y-4">
-          {error && (
-            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-              {error}
-            </div>
-          )}
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-            <input
-              type="text"
-              required
-              className="input-field"
-              placeholder="John Doe"
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-            <input
-              type="email"
-              disabled
-              className="input-field opacity-60 cursor-not-allowed"
-              value={userEmail}
-            />
-          </div>
-          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
-            {loading ? 'Setting up…' : 'Get Started'}
-          </button>
-        </form>
-      </motion.div>
-    </div>
-  );
-};
-
-// --- Super Admin Panel (only shown to users with role = 'super_admin') ---
-const SuperAdminPanel = ({ user, onLogout }: { user: User; onLogout: () => void }) => {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [loadingCompanies, setLoadingCompanies] = useState(true);
-
-  // Create company form
-  const [newCompanyName, setNewCompanyName] = useState('');
-  const [newAdminEmail, setNewAdminEmail] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [createError, setCreateError] = useState('');
-  const [newInviteLink, setNewInviteLink] = useState('');
-  const [newInviteLinkCopied, setNewInviteLinkCopied] = useState(false);
-
-  // Generate admin invite for existing company form
-  const [existingCompanyId, setExistingCompanyId] = useState('');
-  const [existingAdminEmail, setExistingAdminEmail] = useState('');
-  const [existingInviteLoading, setExistingInviteLoading] = useState(false);
-  const [existingInviteError, setExistingInviteError] = useState('');
-  const [existingInviteLink, setExistingInviteLink] = useState('');
-  const [existingInviteLinkCopied, setExistingInviteLinkCopied] = useState(false);
-
-  const fetchCompanies = async () => {
-    setLoadingCompanies(true);
-    const { data } = await supabase
-      .from('companies')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (data) setCompanies(data as Company[]);
-    setLoadingCompanies(false);
-  };
-
-  useEffect(() => {
-    fetchCompanies();
-  }, []);
-
-  const handleCreateCompany = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreating(true);
-    setCreateError('');
-    setNewInviteLink('');
-
-    try {
-      const { data, error: rpcError } = await supabase.rpc('create_company_as_super_admin', {
-        p_company_name: newCompanyName.trim(),
-        p_admin_email: newAdminEmail.trim().toLowerCase(),
-      });
-
-      if (rpcError) throw rpcError;
-
-      const result = data as { company_id: string; invite_token: string } | null;
-      if (result?.company_id && result?.invite_token) {
-        setNewInviteLink(`${window.location.origin}/?invite=${result.invite_token}`);
-        setNewCompanyName('');
-        setNewAdminEmail('');
-        fetchCompanies();
-      } else {
-        throw new Error('Unexpected response from server.');
-      }
-    } catch (err: any) {
-      setCreateError(err.message || 'Failed to create company.');
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const handleGenerateAdminInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setExistingInviteLoading(true);
-    setExistingInviteError('');
-    setExistingInviteLink('');
-
-    try {
-      const { data: invData, error: insertError } = await supabase
-        .from('invitations')
-        .insert({
-          email: existingAdminEmail.trim().toLowerCase(),
-          company_id: existingCompanyId,
-          role: 'admin',
-        })
-        .select('invite_token')
-        .single();
-
-      if (insertError) throw insertError;
-
-      const token = (invData as Pick<Invitation, 'invite_token'>).invite_token;
-      setExistingInviteLink(`${window.location.origin}/?invite=${token}`);
-      setExistingAdminEmail('');
-      setExistingCompanyId('');
-    } catch (err: any) {
-      setExistingInviteError(err.message || 'Failed to generate invite link.');
-    } finally {
-      setExistingInviteLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-slate-900 text-white px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
-            <Briefcase className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="font-bold text-lg font-display">Service Track Pro</h1>
-            <p className="text-xs text-slate-400">Super Admin Console</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-4">
-          <span className="text-sm text-slate-300">{user.email}</span>
-          <button
-            onClick={onLogout}
-            className="text-sm text-slate-400 hover:text-white transition-colors"
-          >
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <main className="p-8 max-w-5xl mx-auto space-y-12">
-        {/* Create New Company */}
-        <section>
-          <div className="mb-6">
-            <h2 className="text-3xl font-bold text-slate-900 font-display">Create New Company</h2>
-            <p className="text-slate-500 mt-1 text-sm">
-              Creates the company and generates an admin invite link in one step.
-            </p>
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-            <form onSubmit={handleCreateCompany} className="space-y-4">
-              {createError && (
-                <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-                  {createError}
-                </div>
-              )}
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
-                    Company Name
-                  </label>
-                  <input
-                    required
-                    className="input-field"
-                    placeholder="Acme Services LLC"
-                    value={newCompanyName}
-                    onChange={e => setNewCompanyName(e.target.value)}
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
-                    Initial Admin Email
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    className="input-field"
-                    placeholder="admin@acme.com"
-                    value={newAdminEmail}
-                    onChange={e => setNewAdminEmail(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={creating}
-                className="btn-primary flex items-center gap-2 disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" />
-                {creating ? 'Creating…' : 'Create Company & Generate Admin Invite'}
-              </button>
-            </form>
-
-            {newInviteLink && (
-              <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-100">
-                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">
-                  Admin Invite Link Generated
-                </p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={newInviteLink}
-                    className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(newInviteLink).then(() => {
-                        setNewInviteLinkCopied(true);
-                        setTimeout(() => setNewInviteLinkCopied(false), 2500);
-                      });
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${
-                      newInviteLinkCopied
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                    }`}
-                  >
-                    {newInviteLinkCopied ? (
-                      <><Check className="w-3.5 h-3.5" /> Copied!</>
-                    ) : (
-                      <><Copy className="w-3.5 h-3.5" /> Copy</>
-                    )}
-                  </button>
-                </div>
-                <p className="text-[11px] text-emerald-600 mt-2">
-                  Share this link with the new company admin. When they click it they'll be guided through account setup.
-                </p>
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* Generate Admin Invite for Existing Company */}
-        {companies.length > 0 && (
-          <section>
-            <div className="mb-6">
-              <h2 className="text-3xl font-bold text-slate-900 font-display">Invite Admin to Existing Company</h2>
-              <p className="text-slate-500 mt-1 text-sm">
-                Generate a new admin invite link for a company that's already been created.
-              </p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-              <form onSubmit={handleGenerateAdminInvite} className="space-y-4">
-                {existingInviteError && (
-                  <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-                    {existingInviteError}
-                  </div>
-                )}
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
-                      Select Company
-                    </label>
-                    <select
-                      required
-                      className="input-field"
-                      value={existingCompanyId}
-                      onChange={e => setExistingCompanyId(e.target.value)}
-                    >
-                      <option value="">Choose a company…</option>
-                      {companies.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
-                      Admin Email
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      className="input-field"
-                      placeholder="admin@company.com"
-                      value={existingAdminEmail}
-                      onChange={e => setExistingAdminEmail(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={existingInviteLoading}
-                  className="btn-primary flex items-center gap-2 disabled:opacity-50"
-                >
-                  <Send className="w-4 h-4" />
-                  {existingInviteLoading ? 'Generating…' : 'Generate Admin Invite Link'}
-                </button>
-              </form>
-
-              {existingInviteLink && (
-                <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-100">
-                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">
-                    Invite Link Generated
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value={existingInviteLink}
-                      className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(existingInviteLink).then(() => {
-                          setExistingInviteLinkCopied(true);
-                          setTimeout(() => setExistingInviteLinkCopied(false), 2500);
-                        });
-                      }}
-                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${
-                        existingInviteLinkCopied
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      {existingInviteLinkCopied ? (
-                        <><Check className="w-3.5 h-3.5" /> Copied!</>
-                      ) : (
-                        <><Copy className="w-3.5 h-3.5" /> Copy</>
-                      )}
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-emerald-600 mt-2">
-                    Share this link with the new admin.
-                  </p>
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* Companies List */}
-        <section>
-          <div className="mb-6">
-            <h2 className="text-3xl font-bold text-slate-900 font-display">
-              Companies {!loadingCompanies && `(${companies.length})`}
-            </h2>
-          </div>
-
-          {loadingCompanies ? (
-            <div className="text-slate-400 py-8 text-center">Loading…</div>
-          ) : companies.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
-              No companies yet. Create the first one above.
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Company</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {companies.map(c => (
-                    <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-4 text-sm font-bold text-slate-900">{c.name}</td>
-                      <td className="px-6 py-4 text-xs text-slate-400">
-                        {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
-                      </td>
-                      <td className="px-6 py-4 text-xs text-slate-400 font-mono">{c.id}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-};
-
-const Layout = ({ children, activeTab, setActiveTab, user, companyName, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, companyName: string, onLogout: () => void }) => {
+const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { children: React.ReactNode, activeTab: string, setActiveTab: (t: string) => void, user: User, onLogout: () => void }) => {
   return (
     <div className="h-screen flex flex-col md:flex-row overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-full md:w-64 bg-slate-900 text-slate-400 flex flex-col border-r border-slate-800 flex-shrink-0 overflow-y-auto">
+      <aside className="w-full md:w-64 bg-slate-900 text-slate-400 flex flex-col border-r border-slate-800 overflow-y-auto shrink-0">
         <div className="p-6 flex items-center gap-3">
           <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
             <Briefcase className="w-5 h-5 text-white" />
           </div>
-          <h1 className="text-white font-bold text-lg tracking-tight font-display">{companyName || 'Service Track Pro'}</h1>
+          <h1 className="text-white font-bold text-lg tracking-tight font-display">Service Track Pro</h1>
         </div>
         
         <nav className="flex-1 px-4 space-y-1">
@@ -1046,6 +305,16 @@ const Layout = ({ children, activeTab, setActiveTab, user, companyName, onLogout
               </button>
             </>
           )}
+          {user.role === 'super_admin' && (
+            <button 
+              onClick={() => setActiveTab('super-admin')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'super-admin' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+            >
+              <Shield className="w-5 h-5" />
+              <span className="font-medium">Super Admin</span>
+              {activeTab === 'super-admin' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+            </button>
+          )}
         </nav>
         
         <div className="p-4 border-t border-slate-800">
@@ -1067,7 +336,7 @@ const Layout = ({ children, activeTab, setActiveTab, user, companyName, onLogout
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto bg-slate-50">
+      <main className="flex-1 overflow-y-auto bg-slate-50 min-h-0">
         {children}
       </main>
     </div>
@@ -1085,13 +354,13 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     job_number: '',
     address: '',
     status: 'active',
-    foreman_id: undefined
+    foreman_id: undefined,
+    company_id: user.company_id
   });
-  const [newCustomer, setNewCustomer] = useState<CustomerDetails>({ phone: '', email: '', billToAddress: '' });
 
   useEffect(() => {
     const fetchJobs = async () => {
-      let query = supabase.from('jobs').select('*').order('id', { ascending: false });
+      let query = supabase.from('jobs').select('*').eq('company_id', user.company_id).order('id', { ascending: false });
       
       if (user.role === 'foreman') {
         query = query.eq('foreman_id', user.id);
@@ -1105,6 +374,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
       const { data, error } = await supabase
         .from('users')
         .select('*')
+        .eq('company_id', user.company_id)
         .eq('role', 'foreman');
       if (!error && data) setForemen(data as User[]);
     };
@@ -1117,23 +387,29 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
 
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user.company_id) return; // guard: user must belong to a company
-    const jobWithCompany = { ...newJob, company_id: user.company_id };
     const { data, error } = await supabase
       .from('jobs')
-      .insert([jobWithCompany])
+      .insert([newJob])
       .select()
       .single();
       
     if (!error && data) {
-      // Save customer contact details to localStorage
-      if (newCustomer.phone || newCustomer.email || newCustomer.billToAddress) {
-        saveCustomerDetails(data.id, newCustomer);
-      }
-      // Reset form state
-      setNewCustomer({ phone: '', email: '', billToAddress: '' });
-      setIsAdding(false);
       onSelectJob(data.id);
+    }
+  };
+
+  const handleDeleteJob = async (e: React.MouseEvent, id: number) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this job? All associated work logs will also be deleted.')) return;
+    
+    const { error } = await supabase
+      .from('jobs')
+      .delete()
+      .eq('id', id)
+      .eq('company_id', user.company_id);
+      
+    if (!error) {
+      setJobs(jobs.filter(j => j.id !== id));
     }
   };
 
@@ -1196,7 +472,18 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                   <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
                     {job.status}
                   </div>
-                  <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
+                    {user.role === 'admin' && (
+                      <button 
+                        onClick={(e) => handleDeleteJob(e, job.id!)}
+                        className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Delete Job"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <h3 className="text-xl font-bold text-slate-900 group-hover:text-brand transition-colors">{job.job_name}</h3>
                 <p className="text-slate-500 text-sm mt-1">{job.customer_name}</p>
@@ -1223,9 +510,9 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+              className="bg-white rounded-3xl w-full max-w-xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col"
             >
-              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <div>
                   <h3 className="text-2xl font-bold font-display text-slate-900">New Project</h3>
                   <p className="text-slate-500 text-sm">Set up a new job to start tracking logs.</p>
@@ -1234,7 +521,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                   <X className="w-6 h-6 text-slate-400" />
                 </button>
               </div>
-              <form onSubmit={handleCreateJob} className="p-8 space-y-6 overflow-y-auto flex-1">
+              <form onSubmit={handleCreateJob} className="p-8 space-y-6 flex-1 overflow-y-auto min-h-0">
                 <div className="space-y-4">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="md:col-span-2">
@@ -1300,43 +587,6 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                     </div>
                   </div>
                 </div>
-
-                {/* Customer Contact Details */}
-                <div className="space-y-4 pt-4 border-t border-slate-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact Details</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Phone</label>
-                      <input 
-                        type="tel"
-                        className="input-field" 
-                        placeholder="(555) 000-0000"
-                        value={newCustomer.phone}
-                        onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer Email</label>
-                      <input 
-                        type="email"
-                        className="input-field" 
-                        placeholder="contact@company.com"
-                        value={newCustomer.email}
-                        onChange={e => setNewCustomer({...newCustomer, email: e.target.value})}
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Billing Address (if different from site)</label>
-                      <input 
-                        className="input-field" 
-                        placeholder="PO Box / Billing address"
-                        value={newCustomer.billToAddress}
-                        onChange={e => setNewCustomer({...newCustomer, billToAddress: e.target.value})}
-                      />
-                    </div>
-                  </div>
-                </div>
-
                 <div className="pt-4 flex gap-4">
                   <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1 py-4">Cancel</button>
                   <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20">Create Project</button>
@@ -1352,6 +602,8 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
 
 const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void, user: User }) => {
   const [job, setJob] = useState<Job | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isAddingLog, setIsAddingLog] = useState(false);
   const [isViewingInvoice, setIsViewingInvoice] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -1364,6 +616,7 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
       .from('jobs')
       .select('*')
       .eq('id', jobId)
+      .eq('company_id', user.company_id)
       .single();
       
     if (!jobError && jobData) {
@@ -1381,14 +634,27 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
     }
   };
 
+  const fetchInvoices = async () => {
+    const { data, error } = await supabase
+      .from('invoices')
+      .select('*')
+      .eq('job_id', jobId)
+      .order('created_at', { ascending: false });
+    
+    if (!error && data) {
+      setInvoices(data);
+    }
+  };
+
   useEffect(() => {
     fetchJob();
+    fetchInvoices();
     const fetchData = async () => {
       const [empRes, eqRes, matRes, tempRes] = await Promise.all([
-        supabase.from('employees').select('*'),
-        supabase.from('equipment').select('*'),
-        supabase.from('materials').select('*'),
-        supabase.from('templates').select('*')
+        supabase.from('employees').select('*').eq('company_id', user.company_id),
+        supabase.from('equipment').select('*').eq('company_id', user.company_id),
+        supabase.from('materials').select('*').eq('company_id', user.company_id),
+        supabase.from('templates').select('*').eq('company_id', user.company_id)
       ]);
       
       if (empRes.data) setEmployees(empRes.data);
@@ -1406,13 +672,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   };
 
   const handleRepeatLog = async (log: WorkLog) => {
-    if (!user.company_id) return; // guard: user must belong to a company
     const newLog = {
       job_id: jobId,
       date: new Date().toISOString().split('T')[0],
       notes: log.notes,
-      data: log.data,
-      company_id: user.company_id,
+      data: log.data
     };
     await supabase.from('work_logs').insert([newLog]);
     fetchJob();
@@ -1457,102 +721,146 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
         </div>
       </div>
 
-      <div className="space-y-6">
-        <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2 font-display">
-          <Clock className="w-5 h-5 text-brand" />
-          Work History
-        </h3>
-        
-        {job.logs?.length === 0 ? (
-          <div className="p-12 border-2 border-dashed border-slate-200 rounded-2xl text-center">
-            <p className="text-slate-400">No work logs recorded yet.</p>
-            <button onClick={() => setIsAddingLog(true)} className="text-slate-900 font-bold mt-2 hover:underline">Add your first day</button>
-          </div>
-        ) : (
-          job.logs?.map(log => (
-            <div key={log.id} className="card">
-              <div className="p-6 flex justify-between items-center bg-slate-50/50 border-b border-slate-100">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-white rounded-lg border border-slate-200 flex items-center justify-center text-slate-900 font-bold">
-                    {new Date(log.date).getDate()}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+        <div className="lg:col-span-2 space-y-8">
+          <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2 font-display">
+            <Clock className="w-5 h-5 text-brand" />
+            Work History
+          </h3>
+          
+          {job.logs?.length === 0 ? (
+            <div className="p-12 border-2 border-dashed border-slate-200 rounded-2xl text-center">
+              <p className="text-slate-400">No work logs recorded yet.</p>
+              <button onClick={() => setIsAddingLog(true)} className="text-slate-900 font-bold mt-2 hover:underline">Add your first day</button>
+            </div>
+          ) : (
+            job.logs?.map(log => (
+              <div key={log.id} className="card">
+                <div className="p-6 flex justify-between items-center bg-slate-50/50 border-b border-slate-100">
+                  <div className="flex items-center gap-4">
+                    <div className="w-10 h-10 bg-white rounded-lg border border-slate-200 flex items-center justify-center text-slate-900 font-bold">
+                      {new Date(log.date).getDate()}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
+                      <p className="text-xs text-slate-500 italic">{log.notes || 'No notes'}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleRepeatLog(log)}
+                      className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-lg transition-all"
+                      title="Repeat Day"
+                    >
+                      <Copy className="w-5 h-5" />
+                    </button>
+                    <button 
+                      onClick={() => handleDeleteLog(log.id!)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-white rounded-lg transition-all"
+                      title="Delete Log"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+                <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-8">
+                  <div>
+                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <Users className="w-3 h-3" /> Employees
+                    </h5>
+                    <ul className="space-y-2">
+                      {log.data.employees.map((e, idx) => (
+                        <li key={idx} className="text-sm flex justify-between">
+                          <span className="text-slate-600">{employees.find(emp => emp.id === e.employeeId)?.name}</span>
+                          <span className="font-mono font-medium">{e.hours}h</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                   <div>
-                    <h4 className="font-bold text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
-                    {log.notes ? (
-                      <p className="text-sm text-slate-600 mt-0.5 max-w-lg">{log.notes}</p>
-                    ) : (
-                      <p className="text-xs text-slate-400 italic">No description</p>
-                    )}
+                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <Truck className="w-3 h-3" /> Equipment
+                    </h5>
+                    <ul className="space-y-2">
+                      {log.data.equipment.map((e, idx) => (
+                        <li key={idx} className="text-sm flex justify-between">
+                          <span className="text-slate-600">{equipment.find(eq => eq.id === e.equipmentId)?.name}</span>
+                          <span className="font-mono font-medium">{e.hours}h</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                      <Package className="w-3 h-3" /> Materials
+                    </h5>
+                    <ul className="space-y-2">
+                      {log.data.materials.map((m, idx) => (
+                        <li key={idx} className="text-sm flex justify-between">
+                          <span className="text-slate-600">{m.name}</span>
+                          <span className="font-mono font-medium">x{m.quantity}</span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => handleRepeatLog(log)}
-                    className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-lg transition-all"
-                    title="Repeat Day"
-                  >
-                    <Copy className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => handleDeleteLog(log.id!)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-white rounded-lg transition-all"
-                    title="Delete Log"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </div>
               </div>
-              <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-8">
-                <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <Users className="w-3 h-3" /> Employees
-                  </h5>
-                  <ul className="space-y-2">
-                    {log.data.employees.map((e, idx) => (
-                      <li key={idx} className="text-sm flex justify-between">
-                        <span className="text-slate-600">{employees.find(emp => emp.id === e.employeeId)?.name}</span>
-                        <span className="font-mono font-medium">{e.hours}h</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <Truck className="w-3 h-3" /> Equipment
-                  </h5>
-                  <ul className="space-y-2">
-                    {log.data.equipment.map((e, idx) => (
-                      <li key={idx} className="text-sm flex justify-between">
-                        <span className="text-slate-600">{equipment.find(eq => eq.id === e.equipmentId)?.name}</span>
-                        <span className="font-mono font-medium">{e.hours}h</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div>
-                  <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
-                    <Package className="w-3 h-3" /> Materials
-                  </h5>
-                  <ul className="space-y-2">
-                    {log.data.materials.map((m, idx) => (
-                      <li key={idx} className="text-sm flex justify-between">
-                        <span className="text-slate-600">{m.name}</span>
-                        <span className="font-mono font-medium">x{m.quantity}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+            ))
+          )}
+        </div>
+
+        <div className="space-y-8">
+          <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2 font-display">
+            <FileText className="w-5 h-5 text-brand" />
+            Saved Invoices
+          </h3>
+          
+          <div className="space-y-4">
+            {invoices.length === 0 ? (
+              <div className="p-8 border-2 border-dashed border-slate-200 rounded-2xl text-center">
+                <p className="text-slate-400 text-sm">No invoices saved yet.</p>
               </div>
-            </div>
-          ))
-        )}
+            ) : (
+              invoices.map(invoice => (
+                <div key={invoice.id} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="font-bold text-slate-900">{invoice.invoice_number}</p>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold">
+                        {new Date(invoice.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                      invoice.status === 'paid' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' :
+                      invoice.status === 'sent' ? 'bg-blue-50 text-blue-600 border border-blue-100' :
+                      'bg-slate-50 text-slate-600 border border-slate-100'
+                    }`}>
+                      {invoice.status}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center mt-4">
+                    <p className="text-lg font-black font-mono text-slate-900">${invoice.grand_total.toFixed(2)}</p>
+                    <button 
+                      onClick={() => {
+                        setSelectedInvoice(invoice);
+                        setIsViewingInvoice(true);
+                      }}
+                      className="p-2 text-slate-400 hover:text-brand hover:bg-slate-50 rounded-lg transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       </div>
 
       <AnimatePresence>
         {isAddingLog && (
           <WorkLogForm 
-            jobId={jobId}
-            companyId={user.company_id}
+            jobId={jobId} 
             employees={employees} 
             equipment={equipment} 
             materials={materials}
@@ -1570,7 +878,14 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             employees={employees} 
             equipment={equipment} 
             materials={materials}
-            onClose={() => setIsViewingInvoice(false)} 
+            invoice={selectedInvoice || undefined}
+            onClose={() => {
+              setIsViewingInvoice(false);
+              setSelectedInvoice(null);
+            }} 
+            onSave={() => {
+              fetchInvoices();
+            }}
           />
         )}
       </AnimatePresence>
@@ -1578,9 +893,8 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   );
 };
 
-const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templates, onClose, onSave }: { 
-  jobId: number,
-  companyId: string | undefined,
+const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave }: { 
+  jobId: number, 
   employees: Employee[], 
   equipment: Equipment[], 
   materials: Material[],
@@ -1593,15 +907,10 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
   const [matchHours, setMatchHours] = useState(true);
   const [crewHours, setCrewHours] = useState(8);
   const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(false);
-  const [materialMenuPos, setMaterialMenuPos] = useState({ top: 0, right: 0 });
   
   const [selectedEmployees, setSelectedEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>([]);
   const [selectedMaterials, setSelectedMaterials] = useState<{ materialId?: number; name: string; quantity: number; unitPrice: number }[]>([]);
-
-  const materialBtnRef = useRef<HTMLButtonElement>(null);
-  const formScrollRef = useRef<HTMLFormElement>(null);
-  const materialsEndRef = useRef<HTMLDivElement>(null);
 
   const applyTemplate = (template: Template) => {
     setSelectedEmployees(template.data.employees);
@@ -1621,23 +930,8 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
     setSelectedEquipment([...selectedEquipment, { equipmentId: id, hours: crewHours, rate: eq.hourly_rate }]);
   };
 
-  const handleOpenMaterialMenu = () => {
-    if (materialBtnRef.current) {
-      const rect = materialBtnRef.current.getBoundingClientRect();
-      setMaterialMenuPos({
-        top: rect.bottom + 8,
-        right: window.innerWidth - rect.right,
-      });
-    }
-    setIsMaterialMenuOpen(v => !v);
-  };
-
   const handleAddMaterial = (mat: Material) => {
-    setSelectedMaterials(prev => [...prev, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
-    // Delay slightly to let React render the new item before scrolling to it
-    setTimeout(() => {
-      materialsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }, 50);
+    setSelectedMaterials([...selectedMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
   };
 
   useEffect(() => {
@@ -1649,7 +943,6 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyId) return; // guard: must have a company to save logs
     const logData: WorkLogEntry = {
       employees: selectedEmployees,
       equipment: selectedEquipment,
@@ -1658,7 +951,7 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
     
     const { error } = await supabase
       .from('work_logs')
-      .insert([{ job_id: jobId, date, notes, data: logData, company_id: companyId }]);
+      .insert([{ job_id: jobId, date, notes, data: logData }]);
       
     if (!error) onSave();
   };
@@ -1681,7 +974,7 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
           </button>
         </div>
 
-        <form ref={formScrollRef} onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0 p-8 space-y-10">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0 p-8 space-y-10">
           {/* Header Info */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
@@ -1689,14 +982,8 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
               <input type="date" className="input-field" value={date} onChange={e => setDate(e.target.value)} required />
             </div>
             <div className="md:col-span-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Description / Notes</label>
-              <textarea 
-                className="input-field resize-none" 
-                rows={3}
-                placeholder="e.g. Completed trenching for main conduit run. Site conditions were good. Crew worked efficiently on the east side perimeter." 
-                value={notes} 
-                onChange={e => setNotes(e.target.value)} 
-              />
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 block">Notes / Description</label>
+              <input className="input-field" placeholder="e.g. Completed trenching for main conduit run" value={notes} onChange={e => setNotes(e.target.value)} />
             </div>
           </div>
 
@@ -1842,9 +1129,8 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
                 </h4>
                 <div className="relative">
                   <button 
-                    ref={materialBtnRef}
                     type="button" 
-                    onClick={handleOpenMaterialMenu}
+                    onClick={() => setIsMaterialMenuOpen(!isMaterialMenuOpen)}
                     className="text-xs font-bold text-slate-900 bg-slate-100 px-3 py-1.5 rounded border border-slate-200 flex items-center gap-2 hover:bg-slate-200 transition-colors"
                   >
                     <Plus className="w-3 h-3" /> Add Material
@@ -1852,18 +1138,14 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
                   <AnimatePresence>
                     {isMaterialMenuOpen && (
                       <>
-                        {/* z-[55]/z-[60]: above the modal's z-50, backdrop below dropdown */}
-                        <div className="fixed inset-0 z-[55]" onClick={() => setIsMaterialMenuOpen(false)} />
+                        <div className="fixed inset-0 z-10" onClick={() => setIsMaterialMenuOpen(false)} />
                         <motion.div 
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 10 }}
-                          style={{ top: materialMenuPos.top, right: materialMenuPos.right }}
-                          className="fixed w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-[60] max-h-64 overflow-y-auto"
+                          className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-64 overflow-auto"
                         >
-                          {materials.length === 0 ? (
-                            <p className="px-4 py-3 text-sm text-slate-400">No materials found.</p>
-                          ) : materials.map(m => (
+                          {materials.map(m => (
                             <button 
                               key={m.id}
                               type="button"
@@ -1912,7 +1194,6 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
                     </button>
                   </div>
                 ))}
-                <div ref={materialsEndRef} />
               </div>
             </section>
           </div>
@@ -1943,717 +1224,240 @@ const WorkLogForm = ({ jobId, companyId, employees, equipment, materials, templa
   );
 };
 
-const InvoiceView = ({ job, employees, equipment, materials, onClose }: { 
+const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, invoice }: { 
   job: Job, 
   employees: Employee[], 
   equipment: Equipment[], 
   materials: Material[],
-  onClose: () => void 
+  onClose: () => void,
+  onSave?: () => void,
+  invoice?: Invoice
 }) => {
-  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
-  const [customer, setCustomer] = useState<CustomerDetails>(() => loadCustomerDetails(job.id!));
-  const [invoiceDetails, setInvoiceDetails] = useState<InvoiceDetails>(() => loadInvoiceDetails(job.id!, job));
-  const [isEditingSettings, setIsEditingSettings] = useState(false);
-  const [isExportingPdf, setIsExportingPdf] = useState(false);
-  const [pdfError, setPdfError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  
+  // Use saved data if viewing a saved invoice, otherwise calculate from current logs
+  const laborTotal = invoice ? invoice.labor_total : (job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0);
+  const equipmentTotal = invoice ? invoice.equipment_total : (job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0);
+  const materialTotal = invoice ? invoice.material_total : (job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * m.unitPrice), 0), 0) || 0);
+  const grandTotal = invoice ? invoice.grand_total : (laborTotal + equipmentTotal + materialTotal);
+  
+  const displayLogs = invoice ? invoice.data.logs : job.logs;
+  const invoiceNumber = invoice ? invoice.invoice_number : `INV-${job.job_number}-${Date.now().toString().slice(-4)}`;
+  const invoiceDate = invoice ? new Date(invoice.date) : new Date();
+  const dueDate = invoice ? new Date(invoice.due_date) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  const laborTotal = job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0;
-  const equipmentTotal = job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0;
-  const materialTotal = job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * m.unitPrice), 0), 0) || 0;
-  const grandTotal = laborTotal + equipmentTotal + materialTotal;
-
-  const billToAddress = customer.billToAddress || job.address;
-
-  const handleSaveSettings = () => {
-    saveCompanySettings(company);
-    saveCustomerDetails(job.id!, customer);
-    saveInvoiceDetails(job.id!, invoiceDetails);
-    setIsEditingSettings(false);
+  const handleDownloadPDF = async () => {
+    const element = document.getElementById('invoice-content');
+    if (!element) return;
+    
+    const canvas = await html2canvas(element, {
+      scale: 2,
+      useCORS: true,
+      logging: false
+    });
+    
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const imgProps = pdf.getImageProperties(imgData);
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
+    
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`Invoice-${job.job_number}-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr + 'T00:00:00');
-    return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
-  };
-
-  const handleExportPdf = async () => {
-    if (isExportingPdf) return;
-    setIsExportingPdf(true);
-    setPdfError('');
-
-    // Open a blank window IMMEDIATELY — while we're still in the user-gesture
-    // context.  iOS Safari and Android Chrome both block window.open() that
-    // happens inside an async callback after an await, so we grab the handle
-    // here (synchronous) and navigate it to the PDF once it's ready.
-    const pdfWindow = window.open('about:blank', '_blank');
-    if (pdfWindow) {
-      // Populate the loading screen using DOM methods (avoids document.write).
-      const doc = pdfWindow.document;
-      doc.title = 'Invoice';
-      const body = doc.body;
-      body.style.cssText = 'margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:system-ui,sans-serif;font-size:1.1rem;color:#64748b;background:#f8fafc;';
-      const msg = doc.createElement('p');
-      msg.textContent = 'Generating PDF\u2026';
-      body.appendChild(msg);
-    }
-
+  const handleSaveInvoice = async () => {
+    setIsSaving(true);
     try {
-      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
-        import('jspdf'),
-        import('jspdf-autotable'),
-      ]);
-
-      const BRAND = [59, 130, 246] as [number, number, number];
-      const DARK  = [15, 23, 42]  as [number, number, number];
-      const GRAY  = [100, 116, 139] as [number, number, number];
-      const LIGHT = [248, 250, 252] as [number, number, number];
-      const WHITE = [255, 255, 255] as [number, number, number];
-
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-      const PW = pdf.internal.pageSize.getWidth();   // 595
-      const PH = pdf.internal.pageSize.getHeight();  // 842
-      const M  = 40; // margin
-      const CW = PW - M * 2; // content width
-
-      // ── Brand accent bar (top) ──────────────────────────────────────
-      pdf.setFillColor(...BRAND);
-      pdf.rect(0, 0, PW, 8, 'F');
-
-      // ── Company section (left) ──────────────────────────────────────
-      let y = 32;
-      const cLines = [company.address, company.city, company.phone, company.email, company.website].filter(Boolean) as string[];
-      // Logo (base64 image) if present
-      if (company.logo) {
-        try {
-          const ext = company.logo.startsWith('data:image/png') ? 'PNG'
-                    : company.logo.startsWith('data:image/svg') ? 'SVG'
-                    : 'JPEG';
-          pdf.addImage(company.logo, ext, M, y, 50, 50, undefined, 'FAST');
-          // company text to the right of logo
-          pdf.setFont('helvetica', 'bold');
-          pdf.setFontSize(14);
-          pdf.setTextColor(...DARK);
-          pdf.text(company.name || 'Company Name', M + 58, y + 14);
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(8);
-          pdf.setTextColor(...GRAY);
-          cLines.forEach((line, i) => pdf.text(line, M + 58, y + 26 + i * 10));
-        } catch {
-          // Logo failed — fall back to text-only
-          pdf.setFont('helvetica', 'bold');
-          pdf.setFontSize(14);
-          pdf.setTextColor(...DARK);
-          pdf.text(company.name || 'Company Name', M, y + 10);
-          pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(8);
-          pdf.setTextColor(...GRAY);
-          cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
+      const invoiceData: Partial<Invoice> = {
+        company_id: job.company_id,
+        job_id: job.id,
+        invoice_number: `INV-${job.job_number}-${Date.now().toString().slice(-4)}`,
+        date: new Date().toISOString(),
+        due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        status: 'draft',
+        labor_total: laborTotal,
+        equipment_total: equipmentTotal,
+        material_total: materialTotal,
+        grand_total: grandTotal,
+        data: {
+          logs: job.logs,
+          customer: job.customer_name,
+          address: job.address,
+          projectName: job.job_name
         }
-      } else {
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(14);
-        pdf.setTextColor(...DARK);
-        pdf.text(company.name || 'Company Name', M, y + 10);
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(8);
-        pdf.setTextColor(...GRAY);
-        cLines.forEach((line, i) => pdf.text(line, M, y + 22 + i * 10));
-      }
+      };
 
-      // ── INVOICE title + meta (right) ─────────────────────────────────
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(36);
-      pdf.setTextColor(220, 226, 236);
-      pdf.text('INVOICE', PW - M, y + 28, { align: 'right' });
-
-      pdf.setFontSize(8);
-      const metaLeft  = PW - M - 130;
-      const metaRight = PW - M;
-      const metaRows = [
-        ['Invoice #',    invoiceDetails.invoiceNumber || '—'],
-        ['Invoice Date', formatDate(invoiceDetails.invoiceDate)],
-        ['Due Date',     formatDate(invoiceDetails.dueDate)],
-        ['Date of Order',formatDate(invoiceDetails.dateOfOrder)],
-      ];
-      metaRows.forEach(([label, value], i) => {
-        const ry = y + 44 + i * 12;
-        pdf.setFont('helvetica', 'normal');
-        pdf.setTextColor(...GRAY);
-        pdf.text(label, metaLeft, ry, { align: 'left' });
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(...DARK);
-        pdf.text(value, metaRight, ry, { align: 'right' });
-      });
-
-      // ── Horizontal rule ─────────────────────────────────────────────
-      y += 100;
-      pdf.setDrawColor(226, 232, 240);
-      pdf.setLineWidth(0.5);
-      pdf.line(M, y, PW - M, y);
-      y += 14;
-
-      // ── Bill To + Project grid ───────────────────────────────────────
-      const colW = CW / 4;
-      const boxH = 68;
-      const boxPad = 8;
-      const labelFontSize = 7;
-      const valueFontSize = 9;
-      const boxes = [
-        { title: 'Bill To',      lines: [job.customer_name, billToAddress, customer.phone, customer.email].filter(Boolean) as string[] },
-        { title: 'Project',      lines: [job.job_name, `Status: ${job.status}`] },
-        { title: 'Job Number',   lines: [job.job_number] },
-        { title: 'Job Location', lines: [invoiceDetails.jobLocation || job.address || '—'] },
-      ];
-
-      boxes.forEach((box, i) => {
-        const bx = M + i * colW;
-        const by = y;
-        pdf.setFillColor(...LIGHT);
-        pdf.setDrawColor(226, 232, 240);
-        pdf.setLineWidth(0.5);
-        pdf.roundedRect(bx, by, colW - 4, boxH, 4, 4, 'FD');
-
-        pdf.setFont('helvetica', 'bold');
-        pdf.setFontSize(labelFontSize);
-        pdf.setTextColor(...BRAND);
-        pdf.text(box.title.toUpperCase(), bx + boxPad, by + boxPad + 6);
-
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(valueFontSize);
-        pdf.setTextColor(...DARK);
-        box.lines.slice(0, 4).forEach((line, li) => {
-          const displayLine = pdf.splitTextToSize(line, colW - boxPad * 2 - 4)[0];
-          pdf.text(displayLine, bx + boxPad, by + boxPad + 18 + li * 11);
-        });
-      });
-
-      // Amount Due box (replaces last box — full right column)
-      const adX = M + 3 * colW;
-      const adY = y;
-      pdf.setFillColor(...BRAND);
-      pdf.roundedRect(adX, adY, colW - 4, boxH, 4, 4, 'F');
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(7);
-      pdf.setTextColor(255, 255, 255);
-      pdf.text('AMOUNT DUE', adX + boxPad, adY + boxPad + 6);
-      pdf.setFontSize(18);
-      pdf.text(`$${grandTotal.toFixed(2)}`, adX + boxPad, adY + boxPad + 26);
-      pdf.setFontSize(7);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setTextColor(200, 220, 255);
-      pdf.text(`Due ${formatDate(invoiceDetails.dueDate)}`, adX + boxPad, adY + boxPad + 40);
-
-      y += boxH + 18;
-
-      // ── Line Items Table ────────────────────────────────────────────
-      const tableBody: (string | { content: string; colSpan?: number; styles?: object })[][] = [];
-
-      (job.logs || []).forEach((log, logIdx) => {
-        const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-        const headerLabel = `Daily Log #${logIdx + 1}${log.notes ? `  —  ${log.notes}` : ''}`;
-        tableBody.push([
-          { content: headerLabel, colSpan: 5, styles: { fillColor: [239, 246, 255], textColor: BRAND, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 5, bottom: 5, left: 8, right: 8 } } },
-        ]);
-
-        log.data.employees.forEach((e) => {
-          const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
-          const role    = employees.find(emp => emp.id === e.employeeId)?.role || '';
-          tableBody.push([
-            `Labor — ${empName}${role ? `  (${role})` : ''}`,
-            logDate,
-            `${e.hours}h`,
-            `$${e.rate.toFixed(2)}/hr`,
-            `$${(e.hours * e.rate).toFixed(2)}`,
-          ]);
-        });
-        log.data.equipment.forEach((e) => {
-          const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
-          tableBody.push([`Equipment — ${eqName}`, logDate, `${e.hours}h`, `$${e.rate.toFixed(2)}/hr`, `$${(e.hours * e.rate).toFixed(2)}`]);
-        });
-        log.data.materials.forEach((m) => {
-          tableBody.push([`Material — ${m.name}`, logDate, `${m.quantity} units`, `$${m.unitPrice.toFixed(2)}/unit`, `$${(m.quantity * m.unitPrice).toFixed(2)}`]);
-        });
-      });
-
-      // Reserve 210pt at the bottom so totals + footer always fit on the same
-      // page as the last table row (totals≈100pt + footer≈80pt + brand bar≈30pt).
-      autoTable(pdf, {
-        startY: y,
-        margin: { left: M, right: M, bottom: 210 },
-        head: [['Description', 'Date', 'Qty / Hrs', 'Rate', 'Total']],
-        body: tableBody,
-        styles: { font: 'helvetica', fontSize: 8, cellPadding: 5, textColor: DARK, lineColor: [226, 232, 240], lineWidth: 0.3 },
-        headStyles: { fillColor: DARK, textColor: WHITE, fontStyle: 'bold', fontSize: 7, cellPadding: { top: 6, bottom: 6, left: 5, right: 5 } },
-        alternateRowStyles: { fillColor: LIGHT },
-        columnStyles: {
-          0: { cellWidth: CW * 0.38 },
-          1: { cellWidth: CW * 0.16 },
-          2: { cellWidth: CW * 0.13, halign: 'center' },
-          3: { cellWidth: CW * 0.15, halign: 'right' },
-          4: { cellWidth: CW * 0.18, halign: 'right', fontStyle: 'bold' },
-        },
-        didParseCell(data) {
-          // Style the "Daily Log" group header rows
-          if (Array.isArray(data.row.raw) && data.row.raw.length === 1 && typeof data.row.raw[0] === 'object' && 'colSpan' in data.row.raw[0]) {
-            data.cell.styles.fillColor = [239, 246, 255];
-            data.cell.styles.textColor = BRAND;
-            data.cell.styles.fontStyle = 'bold';
-            data.cell.styles.fontSize  = 7.5;
-          }
-        },
-      });
-
-      // ── Totals ───────────────────────────────────────────────────────
-      const pdfWithTable = pdf as unknown as { lastAutoTable: { finalY: number } };
-      const finalY = pdfWithTable.lastAutoTable.finalY + 16;
-      const totW = 200;
-      const totX = PW - M - totW;
-
-      pdf.setFillColor(...LIGHT);
-      pdf.setDrawColor(226, 232, 240);
-      pdf.setLineWidth(0.5);
-      pdf.roundedRect(totX, finalY, totW, 80, 4, 4, 'FD');
-
-      const totals = [
-        ['Labor Subtotal',     `$${laborTotal.toFixed(2)}`],
-        ['Equipment Subtotal', `$${equipmentTotal.toFixed(2)}`],
-        ['Materials Subtotal', `$${materialTotal.toFixed(2)}`],
-      ];
-      totals.forEach(([label, val], i) => {
-        const ty = finalY + 12 + i * 14;
-        pdf.setFont('helvetica', 'normal');
-        pdf.setFontSize(8);
-        pdf.setTextColor(...GRAY);
-        pdf.text(label, totX + 10, ty);
-        pdf.setFont('helvetica', 'bold');
-        pdf.setTextColor(...DARK);
-        pdf.text(val, totX + totW - 10, ty, { align: 'right' });
-      });
-      // Divider
-      pdf.setDrawColor(226, 232, 240);
-      pdf.line(totX + 6, finalY + 52, totX + totW - 6, finalY + 52);
-      // Grand total
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(10);
-      pdf.setTextColor(...DARK);
-      pdf.text('Total Due', totX + 10, finalY + 66);
-      pdf.setFontSize(14);
-      pdf.setTextColor(...BRAND);
-      pdf.text(`$${grandTotal.toFixed(2)}`, totX + totW - 10, finalY + 66, { align: 'right' });
-
-      // ── Footer ───────────────────────────────────────────────────────
-      // autoTable's margin.bottom=210 guarantees at least 210 pt of space
-      // below the last table row, so totals + footer always sit on the same
-      // page without an extra page break.
-      const totalsEndY = finalY + 80;
-      const footerStart = totalsEndY + 20;
-
-      pdf.setDrawColor(226, 232, 240);
-      pdf.setLineWidth(0.5);
-      pdf.line(M, footerStart, PW - M, footerStart);
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(7);
-      pdf.setTextColor(...GRAY);
-      pdf.text('PAYMENT TERMS', M, footerStart + 12);
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(8);
-      pdf.setTextColor(...DARK);
-      pdf.text(company.paymentTerms || 'Net 30', M, footerStart + 24);
-      pdf.setFontSize(7);
-      pdf.setTextColor(...GRAY);
-      pdf.text(`Please include invoice number ${invoiceDetails.invoiceNumber} on all payments.`, M, footerStart + 36);
-
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(7);
-      pdf.setTextColor(...GRAY);
-      pdf.text('MAKE CHECKS PAYABLE TO:', PW - M, footerStart + 12, { align: 'right' });
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(9);
-      pdf.setTextColor(...DARK);
-      pdf.text(company.name || '', PW - M, footerStart + 24, { align: 'right' });
-      pdf.setFont('helvetica', 'normal');
-      pdf.setFontSize(7.5);
-      pdf.setTextColor(...GRAY);
-      const remitLines = [[company.address, company.city].filter(Boolean).join(', '), company.email].filter(Boolean);
-      remitLines.forEach((line, i) => pdf.text(line, PW - M, footerStart + 36 + i * 10, { align: 'right' }));
-
-      // Thank you note
-      pdf.setFont('helvetica', 'bold');
-      pdf.setFontSize(7);
-      pdf.setTextColor(203, 213, 225);
-      pdf.text('THANK YOU FOR YOUR BUSINESS!', PW / 2, footerStart + 58, { align: 'center' });
-
-      // Brand accent bar (bottom) — drawn on the very last page
-      pdf.setPage(pdf.getNumberOfPages());
-      pdf.setFillColor(...BRAND);
-      pdf.rect(0, PH - 8, PW, 8, 'F');
-
-      // ── Download ─────────────────────────────────────────────────────
-      const fileName = `Invoice-${invoiceDetails.invoiceNumber || job.job_number || 'export'}.pdf`;
-      const pdfBlob = pdf.output('blob');
-      const blobUrl = URL.createObjectURL(pdfBlob);
-
-      if (pdfWindow && !pdfWindow.closed) {
-        // Navigate the pre-opened window to the PDF blob URL.
-        // • iOS Safari  → opens the PDF viewer; Share Sheet lets user save/share
-        // • Android     → opens PDF in Chrome PDF viewer (download from menu)
-        // • Desktop     → opens PDF in browser PDF viewer or prompts download
-        pdfWindow.location.href = blobUrl;
-      } else {
-        // Popup was blocked — fall back to a hidden <a download> click.
-        // Works on Android Chrome and desktop browsers.
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-
-      // Revoke the blob URL after enough time for the viewer/download to start.
-      // 30 s is generous: iOS Share Sheet and Android download manager both
-      // read the blob well within this window.
-      const BLOB_CLEANUP_MS = 30_000;
-      setTimeout(() => URL.revokeObjectURL(blobUrl), BLOB_CLEANUP_MS);
-    } catch (err) {
-      if (pdfWindow && !pdfWindow.closed) pdfWindow.close();
-      console.error('PDF export failed:', err);
-      setPdfError('Could not generate PDF. Please try again.');
+      const { error } = await supabase.from('invoices').insert([invoiceData]);
+      if (error) throw error;
+      
+      alert('Invoice saved successfully!');
+      if (onSave) onSave();
+    } catch (error: any) {
+      console.error('Error saving invoice:', error);
+      alert('Failed to save invoice: ' + error.message);
     } finally {
-      setIsExportingPdf(false);
+      setIsSaving(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-50 flex flex-col">
-      {/* Toolbar — always visible, never scrolls away */}
-      <div className="flex-shrink-0 w-full max-w-5xl mx-auto pt-6 pb-4 px-4 print:hidden">
-        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 text-white">
-          <h3 className="text-xl sm:text-2xl font-bold font-display">Invoice Preview</h3>
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setIsEditingSettings(!isEditingSettings)}
-              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm"
-            >
-              <Edit3 className="w-4 h-4" /> {isEditingSettings ? 'Hide Details' : 'Edit Details'}
+    <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-50 flex items-center justify-center p-0 md:p-4 overflow-auto">
+      <div className="w-full max-w-5xl min-h-screen md:min-h-0 py-0 md:py-12">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 px-6 md:px-0 text-white sticky top-0 md:relative z-10 py-4 md:py-0 bg-slate-900/80 md:bg-transparent backdrop-blur-md md:backdrop-blur-none">
+          <div className="flex items-center gap-4">
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors md:hidden">
+              <ArrowLeft className="w-6 h-6" />
             </button>
-            <button
-              onClick={handleExportPdf}
-              disabled={isExportingPdf}
-              className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm disabled:opacity-60"
-            >
-              <Download className="w-4 h-4" />
-              {isExportingPdf ? 'Generating…' : 'Download PDF'}
-            </button>
-            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 flex items-center gap-2 text-sm print:hidden">
-              <Printer className="w-4 h-4" /> Print
-            </button>
-            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 text-sm">Close</button>
+            <h3 className="text-xl md:text-2xl font-bold font-display">Invoice Preview</h3>
           </div>
-        </div>
-      </div>
-
-      {/* Scrollable invoice content */}
-      <div className="flex-1 overflow-y-auto">
-      <div className="w-full max-w-5xl mx-auto pb-8 px-4">
-
-        {/* PDF error banner */}
-        {pdfError && (
-          <div className="mb-4 flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm font-medium print:hidden">
-            <span>{pdfError}</span>
-            <button onClick={() => setPdfError('')} className="ml-auto text-red-400 hover:text-red-600">✕</button>
-          </div>
-        )}
-
-        {/* Editable Invoice Settings Panel */}
-        {isEditingSettings && (
-          <div className="bg-white rounded-2xl shadow-xl mb-6 overflow-hidden print:hidden">
-            <div className="p-5 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
-              <h4 className="font-bold text-slate-900 flex items-center gap-2"><Edit3 className="w-4 h-4 text-brand" /> Invoice & Customer Details</h4>
-              <button onClick={handleSaveSettings} className="btn-primary flex items-center gap-2 text-sm py-2">
-                <Save className="w-4 h-4" /> Save Details
+          <div className="flex flex-wrap justify-center gap-2 md:gap-3">
+            {!invoice && (
+              <button 
+                onClick={handleSaveInvoice} 
+                disabled={isSaving}
+                className="btn-secondary bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50"
+              >
+                <Check className="w-4 h-4 md:w-5 md:h-5" /> {isSaving ? 'Saving...' : 'Save to App'}
               </button>
-            </div>
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Invoice Details */}
-              <div className="space-y-4">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Invoice Details</p>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Number</label>
-                  <input className="input-field" value={invoiceDetails.invoiceNumber} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceNumber: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Invoice Date</label>
-                  <input type="date" className="input-field" value={invoiceDetails.invoiceDate} onChange={e => setInvoiceDetails({...invoiceDetails, invoiceDate: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Due Date</label>
-                  <input type="date" className="input-field" value={invoiceDetails.dueDate} onChange={e => setInvoiceDetails({...invoiceDetails, dueDate: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Date of Order</label>
-                  <input type="date" className="input-field" value={invoiceDetails.dateOfOrder} onChange={e => setInvoiceDetails({...invoiceDetails, dateOfOrder: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Job Location</label>
-                  <input className="input-field" placeholder="Job site location" value={invoiceDetails.jobLocation} onChange={e => setInvoiceDetails({...invoiceDetails, jobLocation: e.target.value})} />
-                </div>
-              </div>
-              {/* Customer Details */}
-              <div className="space-y-4">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Customer Contact</p>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Phone</label>
-                  <input className="input-field" type="tel" placeholder="(555) 000-0000" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Customer Email</label>
-                  <input className="input-field" type="email" placeholder="contact@company.com" value={customer.email} onChange={e => setCustomer({...customer, email: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Billing Address (if different from site)</label>
-                  <input className="input-field" placeholder="Billing / PO address" value={customer.billToAddress} onChange={e => setCustomer({...customer, billToAddress: e.target.value})} />
-                </div>
-              </div>
-            </div>
+            )}
+            <button onClick={handleDownloadPDF} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20">
+              <Download className="w-4 h-4 md:w-5 md:h-5" /> PDF
+            </button>
+            <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 hidden md:flex">
+              <Printer className="w-5 h-5" /> Print
+            </button>
+            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 hidden md:flex">Close</button>
           </div>
-        )}
-
-        {/* ===================== INVOICE DOCUMENT ===================== */}
-        <div className="bg-white rounded-lg shadow-2xl text-slate-900 print:shadow-none print:rounded-none" id="invoice">
-
-          {/* Color Bar */}
-          <div className="h-2 bg-brand rounded-t-lg print:rounded-none" />
-
-          <div className="p-5 sm:p-8 md:p-10">
-            {/* Header: Company + INVOICE */}
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-5 mb-8">
-              {/* Company Info */}
-              <div className="flex items-start gap-4">
-                {company.logo ? (
-                  <img src={company.logo} alt="Company Logo" className="h-12 w-auto object-contain sm:h-16" />
-                ) : (
-                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-brand rounded-xl flex items-center justify-center shadow-lg shadow-brand/20 flex-shrink-0">
-                    <Briefcase className="w-6 h-6 sm:w-8 sm:h-8 text-white" />
-                  </div>
-                )}
-                <div>
-                  <h1 className="text-xl sm:text-2xl font-black uppercase tracking-tight font-display text-slate-900">{company.name}</h1>
-                  <p className="text-sm text-slate-500 mt-0.5">{company.address}</p>
-                  <p className="text-sm text-slate-500">{company.city}</p>
-                  <div className="flex flex-wrap gap-x-4 mt-1">
-                    {company.phone && <p className="text-sm text-slate-500">{company.phone}</p>}
-                    {company.email && <p className="text-sm text-slate-500">{company.email}</p>}
-                    {company.website && <p className="text-sm text-slate-500">{company.website}</p>}
-                  </div>
-                </div>
-              </div>
-
-              {/* Invoice Title + Meta */}
-              <div className="sm:text-right">
-                <h2 className="text-4xl sm:text-6xl font-black text-slate-100 uppercase tracking-tighter font-display leading-none mb-3">INVOICE</h2>
-                <div className="space-y-1 text-sm">
-                  <div className="flex items-center sm:justify-end gap-3">
-                    <span className="text-slate-400 font-medium">Invoice #</span>
-                    <span className="font-bold text-slate-900 font-mono">{invoiceDetails.invoiceNumber}</span>
-                  </div>
-                  <div className="flex items-center sm:justify-end gap-3">
-                    <span className="text-slate-400 font-medium">Invoice Date</span>
-                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.invoiceDate)}</span>
-                  </div>
-                  <div className="flex items-center sm:justify-end gap-3">
-                    <span className="text-slate-400 font-medium">Due Date</span>
-                    <span className="font-semibold text-red-600">{formatDate(invoiceDetails.dueDate)}</span>
-                  </div>
-                  <div className="flex items-center sm:justify-end gap-3">
-                    <span className="text-slate-400 font-medium">Date of Order</span>
-                    <span className="font-semibold text-slate-700">{formatDate(invoiceDetails.dateOfOrder)}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Divider */}
-            <div className="h-px bg-slate-200 mb-8" />
-
-            {/* Bill To + Project Info */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
-              {/* Bill To */}
-              <div className="bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
-                <p className="text-[10px] font-bold text-brand uppercase tracking-widest mb-3">Bill To</p>
-                <p className="text-base sm:text-lg font-bold text-slate-900 leading-tight">{job.customer_name}</p>
-                <p className="text-sm text-slate-600 mt-1">{billToAddress}</p>
-                {customer.phone && (
-                  <p className="text-sm text-slate-600 mt-1 flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400" />{customer.phone}</p>
-                )}
-                {customer.email && (
-                  <p className="text-sm text-slate-600 flex items-center gap-1.5"><Mail className="w-3 h-3 text-slate-400" />{customer.email}</p>
-                )}
-              </div>
-
-              {/* Project Details */}
-              <div className="sm:col-span-2 grid grid-cols-2 gap-3 sm:gap-4">
-                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Project</p>
-                  <p className="font-bold text-slate-900 text-sm sm:text-base">{job.job_name}</p>
-                  <span className={`inline-block mt-1.5 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${
-                    job.status === 'active' 
-                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                      : 'bg-slate-100 text-slate-500 border-slate-200'
-                  }`}>{job.status}</span>
-                </div>
-                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Number</p>
-                  <p className="font-bold font-mono text-slate-900 text-sm sm:text-base break-all">{job.job_number}</p>
-                </div>
-                <div className="bg-slate-50 rounded-xl p-3 sm:p-4 border border-slate-100">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Job Location</p>
-                  <p className="text-sm text-slate-700 flex items-start gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-slate-400 flex-shrink-0 mt-0.5" />
-                    {invoiceDetails.jobLocation || job.address || '—'}
-                  </p>
-                </div>
-                <div className="bg-brand rounded-xl p-3 sm:p-4 text-white">
-                  <p className="text-[10px] font-bold text-white/70 uppercase tracking-widest mb-2">Amount Due</p>
-                  <p className="text-xl sm:text-2xl font-black font-mono">${grandTotal.toFixed(2)}</p>
-                  <p className="text-[10px] text-white/60 mt-1">Due {formatDate(invoiceDetails.dueDate)}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Line Items */}
-            <div className="mb-6 sm:mb-8">
-              <div className="rounded-xl overflow-hidden border border-slate-200 overflow-x-auto">
-                <table className="w-full text-sm min-w-[560px]">
-                  <thead>
-                    <tr className="bg-slate-900 text-white">
-                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Description</th>
-                      <th className="px-4 sm:px-5 py-3 text-left text-[10px] font-bold uppercase tracking-widest">Date</th>
-                      <th className="px-4 sm:px-5 py-3 text-center text-[10px] font-bold uppercase tracking-widest">Qty / Hrs</th>
-                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Rate</th>
-                      <th className="px-4 sm:px-5 py-3 text-right text-[10px] font-bold uppercase tracking-widest">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {job.logs?.map((log, logIdx) => {
-                      const rows: React.ReactNode[] = [];
-                      const logDate = new Date(log.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                      if (log.notes) {
-                        rows.push(
-                          <tr key={`desc-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
-                            <td colSpan={5} className="px-5 pt-4 pb-1">
-                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest mr-2">Daily Log #{logIdx + 1}</span>
-                              <span className="text-xs text-slate-500 italic">{log.notes}</span>
-                            </td>
-                          </tr>
-                        );
-                      } else {
-                        rows.push(
-                          <tr key={`header-${log.id}`} className={logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}>
-                            <td colSpan={5} className="px-5 pt-4 pb-1">
-                              <span className="text-[10px] font-bold text-brand uppercase tracking-widest">Daily Log #{logIdx + 1}</span>
-                            </td>
-                          </tr>
-                        );
-                      }
-
-                      log.data.employees.forEach((e, idx) => {
-                        const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
-                        rows.push(
-                          <tr key={`emp-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
-                            <td className="px-5 py-2.5 text-slate-700">
-                              <span className="font-medium">Labor — </span>{empName}
-                              <span className="ml-2 text-[10px] text-slate-400 uppercase font-bold tracking-wider">{employees.find(emp => emp.id === e.employeeId)?.role}</span>
-                            </td>
-                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
-                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
-                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
-                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
-                          </tr>
-                        );
-                      });
-
-                      log.data.equipment.forEach((e, idx) => {
-                        const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
-                        rows.push(
-                          <tr key={`eq-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
-                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Equipment — </span>{eqName}</td>
-                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
-                            <td className="px-5 py-2.5 text-center font-mono font-medium">{e.hours}h</td>
-                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${e.rate.toFixed(2)}/hr</td>
-                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
-                          </tr>
-                        );
-                      });
-
-                      log.data.materials.forEach((m, idx) => {
-                        rows.push(
-                          <tr key={`mat-${log.id}-${idx}`} className={`border-t border-slate-100 ${logIdx % 2 === 0 ? 'bg-slate-50/50' : 'bg-white'}`}>
-                            <td className="px-5 py-2.5 text-slate-700"><span className="font-medium">Material — </span>{m.name}</td>
-                            <td className="px-5 py-2.5 text-slate-500 text-xs">{logDate}</td>
-                            <td className="px-5 py-2.5 text-center font-mono font-medium">{m.quantity} units</td>
-                            <td className="px-5 py-2.5 text-right font-mono text-slate-600">${m.unitPrice.toFixed(2)}/unit</td>
-                            <td className="px-5 py-2.5 text-right font-mono font-bold text-slate-900">${(m.quantity * m.unitPrice).toFixed(2)}</td>
-                          </tr>
-                        );
-                      });
-
-                      return rows;
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Totals */}
-            <div className="flex justify-end mb-6 sm:mb-8">
-              <div className="w-full sm:w-72 space-y-2 bg-slate-50 rounded-xl p-4 sm:p-5 border border-slate-100">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Labor Subtotal</span>
-                  <span className="font-mono font-semibold text-slate-700">${laborTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Equipment Subtotal</span>
-                  <span className="font-mono font-semibold text-slate-700">${equipmentTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Materials Subtotal</span>
-                  <span className="font-mono font-semibold text-slate-700">${materialTotal.toFixed(2)}</span>
-                </div>
-                <div className="h-px bg-slate-200 my-2" />
-                <div className="flex justify-between items-center">
-                  <span className="text-base font-black uppercase tracking-tight text-slate-900">Total Due</span>
-                  <span className="text-2xl font-black font-mono text-brand">${grandTotal.toFixed(2)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="border-t border-slate-200 pt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Payment Terms</p>
-                <p className="text-sm text-slate-600">{company.paymentTerms}</p>
-                <p className="text-xs text-slate-400 mt-1">Please include invoice number <strong className="text-slate-600">{invoiceDetails.invoiceNumber}</strong> on all payments.</p>
-              </div>
-              <div className="md:text-right">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Make checks payable to:</p>
-                <p className="text-sm font-bold text-slate-900">{company.name}</p>
-                <p className="text-xs text-slate-500">{company.address}, {company.city}</p>
-                {company.email && <p className="text-xs text-slate-500">{company.email}</p>}
-              </div>
-            </div>
-
-            <div className="mt-6 text-center">
-              <p className="text-xs font-bold text-slate-300 uppercase tracking-widest">Thank you for your business!</p>
-            </div>
-          </div>
-
-          {/* Bottom Color Bar */}
-          <div className="h-2 bg-brand rounded-b-lg print:rounded-none" />
         </div>
-      </div>
+
+        <div className="bg-white p-6 md:p-16 rounded-none md:rounded-3xl shadow-2xl text-slate-900 print:shadow-none print:p-0" id="invoice-content">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start border-b-4 border-slate-900 pb-10 mb-12 gap-8">
+            <div>
+              <div className="flex items-center gap-4 mb-6">
+                <div className="w-12 h-12 bg-brand rounded-2xl flex items-center justify-center shadow-xl shadow-brand/20">
+                  <Briefcase className="w-7 h-7 text-white" />
+                </div>
+                <h1 className="text-3xl font-black uppercase tracking-tighter font-display">Service Track Pro</h1>
+              </div>
+              <div className="space-y-1 text-slate-500 text-sm md:text-base">
+                <p className="font-bold text-slate-900">123 Service Way, Industrial Park</p>
+                <p>Springfield, ST 55555</p>
+                <p>(555) 123-4567 • billing@servicetrackpro.com</p>
+              </div>
+            </div>
+            <div className="text-left md:text-right w-full md:w-auto">
+              <h2 className="text-6xl md:text-8xl font-black text-slate-100 uppercase mb-6 font-display leading-none">Invoice</h2>
+              <div className="space-y-1">
+                <p className="text-xl font-bold">Job #: {job.job_number}</p>
+                <p className="text-slate-500 font-medium">Date: {invoiceDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                <p className="text-slate-500 font-medium">Due Date: {dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Customer Info */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 mb-16">
+            <div className="p-8 bg-slate-50 rounded-3xl border border-slate-100">
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Bill To:</h4>
+              <p className="text-2xl font-black text-slate-900 mb-2">{job.customer_name}</p>
+              <p className="text-slate-600 leading-relaxed">{job.address}</p>
+            </div>
+            <div className="p-8 bg-slate-50 rounded-3xl border border-slate-100">
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Project Details:</h4>
+              <p className="text-2xl font-black text-slate-900 mb-2">{job.job_name}</p>
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <p className="text-slate-600 font-medium uppercase text-xs tracking-wider">Status: {job.status}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Line Items */}
+          <div className="space-y-16 mb-16">
+            {displayLogs?.map((log: any) => (
+              <div key={log.id} className="relative">
+                <div className="flex flex-col md:flex-row justify-between items-baseline mb-6 gap-2">
+                  <h5 className="font-black text-xl text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} — Daily Log</h5>
+                  <p className="text-sm text-slate-400 font-medium italic">{log.notes}</p>
+                </div>
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="border-b-2 border-slate-100">
+                        <th className="pb-4 font-bold uppercase text-[10px] tracking-widest text-slate-400">Description</th>
+                        <th className="pb-4 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-center">Qty/Hrs</th>
+                        <th className="pb-4 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Rate</th>
+                        <th className="pb-4 font-bold uppercase text-[10px] tracking-widest text-slate-400 text-right">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {log.data.employees.map((e, idx) => (
+                        <tr key={`emp-${idx}`} className="group">
+                          <td className="py-4 font-medium text-slate-700">Labor: {employees.find(emp => emp.id === e.employeeId)?.name}</td>
+                          <td className="py-4 text-center font-mono text-slate-600">{e.hours}h</td>
+                          <td className="py-4 text-right font-mono text-slate-600">${e.rate.toFixed(2)}</td>
+                          <td className="py-4 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      {log.data.equipment.map((e, idx) => (
+                        <tr key={`eq-${idx}`} className="group">
+                          <td className="py-4 font-medium text-slate-700">Equipment: {equipment.find(eq => eq.id === e.equipmentId)?.name}</td>
+                          <td className="py-4 text-center font-mono text-slate-600">{e.hours}h</td>
+                          <td className="py-4 text-right font-mono text-slate-600">${e.rate.toFixed(2)}</td>
+                          <td className="py-4 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                      {log.data.materials.map((m, idx) => (
+                        <tr key={`mat-${idx}`} className="group">
+                          <td className="py-4 font-medium text-slate-700">Material: {m.name}</td>
+                          <td className="py-4 text-center font-mono text-slate-600">{m.quantity}</td>
+                          <td className="py-4 text-right font-mono text-slate-600">${m.unitPrice.toFixed(2)}</td>
+                          <td className="py-4 text-right font-mono font-bold text-slate-900">${(m.quantity * m.unitPrice).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Totals */}
+          <div className="flex justify-end pt-12 border-t-4 border-slate-900">
+            <div className="w-full md:w-80 space-y-4">
+              <div className="flex justify-between text-base">
+                <span className="text-slate-500 font-medium">Labor Subtotal:</span>
+                <span className="font-mono font-bold text-slate-900">${laborTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-base">
+                <span className="text-slate-500 font-medium">Equipment Subtotal:</span>
+                <span className="font-mono font-bold text-slate-900">${equipmentTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex justify-between text-base">
+                <span className="text-slate-500 font-medium">Material Subtotal:</span>
+                <span className="font-mono font-bold text-slate-900">${materialTotal.toFixed(2)}</span>
+              </div>
+              <div className="pt-6 border-t-2 border-slate-100 flex justify-between items-center">
+                <span className="text-2xl font-black uppercase tracking-tighter text-slate-900">Total Due:</span>
+                <span className="text-4xl font-black font-mono text-brand">${grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-32 pt-12 border-t border-slate-100 text-center">
+            <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 mb-4">Thank you for your business</p>
+            <div className="max-w-md mx-auto space-y-2">
+              <p className="text-xs text-slate-400 leading-relaxed italic">
+                Please make checks payable to <span className="font-bold text-slate-600">Service Track Pro</span>. 
+                Payment is due within 30 days of invoice date. Late payments may be subject to a 1.5% monthly finance charge.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2673,149 +1477,68 @@ const Settings = ({ user }: { user: User }) => {
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
 
-  // Company Settings
-  const [company, setCompany] = useState<CompanySettings>(loadCompanySettings);
-  const [companySaved, setCompanySaved] = useState(false);
-  const [logoError, setLogoError] = useState('');
-  const logoInputRef = useRef<HTMLInputElement>(null);
-
-  // Invite Team Members
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'foreman' | 'crew' | 'admin'>('foreman');
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [generatedLink, setGeneratedLink] = useState('');
-  const [linkCopied, setLinkCopied] = useState(false);
-  const [inviteError, setInviteError] = useState('');
-  const [pendingInvitations, setPendingInvitations] = useState<Invitation[]>([]);
-
   const fetchAll = async () => {
-    const [empRes, eqRes, matRes, tempRes, invRes] = await Promise.all([
-      supabase.from('employees').select('*'),
-      supabase.from('equipment').select('*'),
-      supabase.from('materials').select('*'),
-      supabase.from('templates').select('*'),
-      supabase.from('invitations').select('*').is('accepted_at', null).order('created_at', { ascending: false }),
+    const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+      supabase.from('employees').select('*').eq('company_id', user.company_id),
+      supabase.from('equipment').select('*').eq('company_id', user.company_id),
+      supabase.from('materials').select('*').eq('company_id', user.company_id),
+      supabase.from('templates').select('*').eq('company_id', user.company_id)
     ]);
     
     if (empRes.data) setEmployees(empRes.data);
     if (eqRes.data) setEquipment(eqRes.data);
     if (matRes.data) setMaterials(matRes.data);
     if (tempRes.data) setTemplates(tempRes.data);
-    if (invRes.data) setPendingInvitations(invRes.data as Invitation[]);
   };
 
   useEffect(() => {
     fetchAll();
-  }, []);
+  }, [user.company_id]);
 
-  const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0 });
-  const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0 });
-  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0 });
-
-  const handleGenerateInviteLink = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail.trim() || !user.company_id) return;
-    setInviteLoading(true);
-    setInviteError('');
-    setGeneratedLink('');
-
-    try {
-      const { data: invitationData, error: rpcError } = await supabase.rpc('create_invitation', {
-        p_email: inviteEmail.trim().toLowerCase(),
-        p_role: inviteRole,
-      });
-
-      if (rpcError) throw rpcError;
-
-      const token = (invitationData as { invite_token: string }).invite_token;
-      const inviteUrl = `${window.location.origin}/?invite=${token}`;
-      setGeneratedLink(inviteUrl);
-      setInviteEmail('');
-      setInviteRole('foreman');
-      fetchAll();
-    } catch (err: any) {
-      setInviteError(err.message || 'Failed to generate invite link.');
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(generatedLink).then(() => {
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 2500);
-    });
-  };
-
-  const handleRevokeInvitation = async (id: string) => {
-    if (!confirm('Revoke this invitation?')) return;
-    await supabase.from('invitations').delete().eq('id', id);
-    fetchAll();
-  };
+  const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
+  const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0, company_id: user.company_id });
+  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0, company_id: user.company_id });
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user.company_id) return; // guard: must have a company
-    await supabase.from('employees').insert([{ ...newEmployee, company_id: user.company_id }]);
-    setNewEmployee({ name: '', role: '', hourly_rate: 0 });
+    await supabase.from('employees').insert([newEmployee]);
+    setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
     setIsAddingEmployee(false);
     fetchAll();
   };
 
   const handleAddEquipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user.company_id) return; // guard: must have a company
-    await supabase.from('equipment').insert([{ ...newEquipment, company_id: user.company_id }]);
-    setNewEquipment({ name: '', hourly_rate: 0 });
+    await supabase.from('equipment').insert([newEquipment]);
+    setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
     setIsAddingEquipment(false);
     fetchAll();
   };
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user.company_id) return; // guard: must have a company
-    await supabase.from('materials').insert([{ ...newMaterial, company_id: user.company_id }]);
-    setNewMaterial({ name: '', unit_price: 0 });
+    await supabase.from('materials').insert([newMaterial]);
+    setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
     setIsAddingMaterial(false);
     fetchAll();
   };
 
-  const handleSaveCompany = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveCompanySettings(company);
-    setCompanySaved(true);
-    setTimeout(() => setCompanySaved(false), 2500);
+  const handleDeleteEmployee = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this employee?')) return;
+    await supabase.from('employees').delete().eq('id', id).eq('company_id', user.company_id);
+    fetchAll();
   };
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const handleDeleteEquipment = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this equipment?')) return;
+    await supabase.from('equipment').delete().eq('id', id).eq('company_id', user.company_id);
+    fetchAll();
+  };
 
-    // Validate file type
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      setLogoError('Unsupported file type. Please upload a PNG, JPG, SVG, GIF, or WebP image.');
-      e.target.value = '';
-      return;
-    }
-
-    // Validate file size (max 2MB to stay within localStorage limits)
-    const maxSizeBytes = 2 * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-      setLogoError('Image is too large. Please upload an image under 2 MB.');
-      e.target.value = '';
-      return;
-    }
-
-    setLogoError('');
-    const reader = new FileReader();
-    reader.onload = () => {
-      setCompany(prev => ({ ...prev, logo: reader.result as string }));
-    };
-    reader.onerror = () => {
-      setLogoError('Failed to read the image file. Please try again.');
-    };
-    reader.readAsDataURL(file);
+  const handleDeleteMaterial = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this material?')) return;
+    await supabase.from('materials').delete().eq('id', id).eq('company_id', user.company_id);
+    fetchAll();
   };
 
   const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
@@ -2827,7 +1550,7 @@ const Settings = ({ user }: { user: User }) => {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
-          <p className="text-slate-500 mt-1">Manage company info, employees, equipment, and materials.</p>
+          <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
         </div>
         <div className="flex gap-3">
           <div className="px-4 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-3 shadow-sm">
@@ -2836,142 +1559,6 @@ const Settings = ({ user }: { user: User }) => {
           </div>
         </div>
       </header>
-
-      {/* Company Information */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-brand" />
-          </div>
-          <div>
-            <h3 className="text-2xl font-bold text-slate-900 font-display">Company Information</h3>
-            <p className="text-sm text-slate-500">This information appears on your invoices.</p>
-          </div>
-        </div>
-
-        <form onSubmit={handleSaveCompany} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
-            <p className="text-sm font-medium text-slate-600">Saved changes apply to all new invoices.</p>
-            <button
-              type="submit"
-              className={`btn-primary flex items-center gap-2 text-sm py-2 transition-all ${companySaved ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
-            >
-              {companySaved ? <><Check className="w-4 h-4" /> Saved!</> : <><Save className="w-4 h-4" /> Save Company Info</>}
-            </button>
-          </div>
-
-          <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Logo Upload */}
-            <div className="md:col-span-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 block">Company Logo</label>
-              <div className="flex items-center gap-6">
-                <div className="w-24 h-24 rounded-2xl border-2 border-dashed border-slate-200 flex items-center justify-center bg-slate-50 overflow-hidden flex-shrink-0">
-                  {company.logo ? (
-                    <img src={company.logo} alt="Logo" className="w-full h-full object-contain p-2" />
-                  ) : (
-                    <Building2 className="w-10 h-10 text-slate-300" />
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => logoInputRef.current?.click()}
-                    className="btn-secondary flex items-center gap-2 text-sm"
-                  >
-                    <Upload className="w-4 h-4" /> Upload Logo
-                  </button>
-                  {company.logo && (
-                    <button
-                      type="button"
-                      onClick={() => setCompany(prev => ({ ...prev, logo: '' }))}
-                      className="text-xs text-red-500 hover:underline block"
-                    >
-                      Remove logo
-                    </button>
-                  )}
-                  <p className="text-xs text-slate-400">PNG, JPG, SVG, WebP. Max 2 MB. Recommended: 300×100px</p>
-                  {logoError && <p className="text-xs text-red-500 font-medium">{logoError}</p>}
-                </div>
-                <input
-                  ref={logoInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleLogoUpload}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
-              <input
-                required
-                className="input-field"
-                placeholder="e.g. Acme Services LLC"
-                value={company.name}
-                onChange={e => setCompany({...company, name: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Website</label>
-              <input
-                className="input-field"
-                placeholder="www.yourcompany.com"
-                value={company.website}
-                onChange={e => setCompany({...company, website: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Street Address</label>
-              <input
-                className="input-field"
-                placeholder="123 Main Street"
-                value={company.address}
-                onChange={e => setCompany({...company, address: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">City, State, ZIP</label>
-              <input
-                className="input-field"
-                placeholder="Springfield, ST 55555"
-                value={company.city}
-                onChange={e => setCompany({...company, city: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Phone</label>
-              <input
-                type="tel"
-                className="input-field"
-                placeholder="(555) 123-4567"
-                value={company.phone}
-                onChange={e => setCompany({...company, phone: e.target.value})}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-              <input
-                type="email"
-                className="input-field"
-                placeholder="billing@yourcompany.com"
-                value={company.email}
-                onChange={e => setCompany({...company, email: e.target.value})}
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Payment Terms (shown on invoice footer)</label>
-              <textarea
-                className="input-field resize-none"
-                rows={2}
-                placeholder="e.g. Payment is due within 30 days of invoice date."
-                value={company.paymentTerms}
-                onChange={e => setCompany({...company, paymentTerms: e.target.value})}
-              />
-            </div>
-          </div>
-        </form>
-      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
         {/* Employees */}
@@ -3011,9 +1598,18 @@ const Settings = ({ user }: { user: User }) => {
                     <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">{e.role}</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                <div className="text-right flex items-center gap-4">
+                  <div>
+                    <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                  </div>
+                  <button 
+                    onClick={() => handleDeleteEmployee(e.id!)}
+                    className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete Employee"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
@@ -3059,9 +1655,18 @@ const Settings = ({ user }: { user: User }) => {
                   </div>
                   <p className="font-bold text-slate-900">{e.name}</p>
                 </div>
-                <div className="text-right">
-                  <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                <div className="text-right flex items-center gap-4">
+                  <div>
+                    <p className="font-mono font-bold text-slate-700">${e.hourly_rate}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">per hour</p>
+                  </div>
+                  <button 
+                    onClick={() => handleDeleteEquipment(e.id!)}
+                    className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete Equipment"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
@@ -3105,9 +1710,18 @@ const Settings = ({ user }: { user: User }) => {
                   <p className="font-bold text-slate-900">{m.name}</p>
                   <p className="text-[10px] text-slate-400 font-bold uppercase">Material Item</p>
                 </div>
-                <div className="text-right">
-                  <p className="font-mono font-bold text-emerald-600">${m.unit_price}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase">per unit</p>
+                <div className="text-right flex items-center gap-4">
+                  <div>
+                    <p className="font-mono font-bold text-emerald-600">${m.unit_price}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">per unit</p>
+                  </div>
+                  <button 
+                    onClick={() => handleDeleteMaterial(m.id!)}
+                    className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                    title="Delete Material"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             ))}
@@ -3120,143 +1734,16 @@ const Settings = ({ user }: { user: User }) => {
         </section>
       </div>
 
-      {/* ── Invite Team Members ────────────────────────────────────── */}
-      <section className="space-y-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
-            <UserPlus className="w-5 h-5 text-brand" />
-          </div>
-          <div>
-            <h3 className="text-2xl font-bold text-slate-900 font-display">Invite Team Members</h3>
-            <p className="text-sm text-slate-500">Generate a magic-link invite to send to new admins, foremen, or crew.</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-            <p className="text-sm font-medium text-slate-600">Enter the invitee's email and role, then click <strong>Generate Link</strong>. Copy the link and send it — the recipient will be guided through account setup.</p>
-          </div>
-
-          <form onSubmit={handleGenerateInviteLink} className="p-6 space-y-4">
-            {inviteError && (
-              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">{inviteError}</div>
-            )}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="flex-1">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
-                <input
-                  type="email"
-                  required
-                  className="input-field"
-                  placeholder="team@example.com"
-                  value={inviteEmail}
-                  onChange={e => setInviteEmail(e.target.value)}
-                />
-              </div>
-              <div className="w-full sm:w-36">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role</label>
-                <select
-                  className="input-field"
-                  value={inviteRole}
-                  onChange={e => setInviteRole(e.target.value as 'foreman' | 'crew' | 'admin')}
-                >
-                  <option value="crew">Crew</option>
-                  <option value="foreman">Foreman</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
-              <div className="flex items-end">
-                <button type="submit" disabled={inviteLoading} className="btn-primary flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
-                  <Send className="w-4 h-4" />
-                  {inviteLoading ? 'Generating…' : 'Generate Link'}
-                </button>
-              </div>
-            </div>
-          </form>
-
-          {/* Generated link display */}
-          {generatedLink && (
-            <div className="px-6 pb-6">
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
-                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">Invite Link Generated</p>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    readOnly
-                    value={generatedLink}
-                    className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCopyLink}
-                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${linkCopied ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}
-                  >
-                    {linkCopied ? <><Check className="w-3.5 h-3.5" /> Copied!</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
-                  </button>
-                </div>
-                <p className="text-[11px] text-emerald-600 mt-2">Send this link to the invitee. When they click it, they'll be guided through account setup.</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Pending Invitations */}
-        {pendingInvitations.length > 0 && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-              <h4 className="text-sm font-bold text-slate-700">Pending Invitations</h4>
-            </div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
-                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {pendingInvitations.map(inv => (
-                  <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-3 text-sm text-slate-700 font-medium">{inv.email}</td>
-                    <td className="px-6 py-3">
-                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border capitalize ${
-                        inv.role === 'admin'
-                          ? 'bg-purple-50 text-purple-700 border-purple-100'
-                          : inv.role === 'foreman'
-                          ? 'bg-blue-50 text-blue-700 border-blue-100'
-                          : 'bg-amber-50 text-amber-700 border-amber-100'
-                      }`}>
-                        {inv.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-3 text-xs text-slate-400">{new Date(inv.created_at).toLocaleDateString()}</td>
-                    <td className="px-6 py-3 text-right">
-                      <button
-                        onClick={() => handleRevokeInvitation(inv.id)}
-                        className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1 ml-auto"
-                      >
-                        <X className="w-3 h-3" /> Revoke
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
       {/* Modals for Adding */}
       <AnimatePresence>
         {isAddingEmployee && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Employee</h3>
                 <button onClick={() => setIsAddingEmployee(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddEmployee} className="p-6 space-y-4">
+              <form onSubmit={handleAddEmployee} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
                   <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
@@ -3280,12 +1767,12 @@ const Settings = ({ user }: { user: User }) => {
 
         {isAddingEquipment && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Equipment</h3>
                 <button onClick={() => setIsAddingEquipment(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddEquipment} className="p-6 space-y-4">
+              <form onSubmit={handleAddEquipment} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
                   <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
@@ -3305,12 +1792,12 @@ const Settings = ({ user }: { user: User }) => {
 
         {isAddingMaterial && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden">
-              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Material</h3>
                 <button onClick={() => setIsAddingMaterial(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddMaterial} className="p-6 space-y-4">
+              <form onSubmit={handleAddMaterial} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
                   <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
@@ -3332,29 +1819,42 @@ const Settings = ({ user }: { user: User }) => {
   );
 };
 
-const UserManagement = ({ currentUser }: { currentUser: User }) => {
+const UserManagement = ({ user }: { user: User }) => {
   const [users, setUsers] = useState<User[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [inviteLink, setInviteLink] = useState('');
 
   const fetchUsers = async () => {
     setLoading(true);
-    const [usersRes, invitesRes] = await Promise.all([
-      supabase.from('users').select('*'),
-      supabase
-        .from('invitations')
-        .select('*')
-        .is('accepted_at', null)
-        .order('created_at', { ascending: false }),
-    ]);
-    if (!usersRes.error && usersRes.data) setUsers(usersRes.data as User[]);
-    if (!invitesRes.error && invitesRes.data) setInvitations(invitesRes.data as Invitation[]);
+    const { data, error } = await supabase.from('users').select('*').eq('company_id', user.company_id);
+    if (!error && data) {
+      setUsers(data as User[]);
+    }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [user.company_id]);
+
+  const generateInvite = async () => {
+    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const { data, error } = await supabase
+      .from('invitations')
+      .insert([{
+        company_id: user.company_id,
+        role: 'foreman',
+        token,
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
+      }])
+      .select()
+      .single();
+
+    if (!error && data) {
+      const url = `${window.location.origin}/?token=${token}`;
+      setInviteLink(url);
+    }
+  };
 
   const handlePromote = async (id: number) => {
     if (!confirm('Are you sure you want to promote this user to Admin? This action cannot be undone.')) return;
@@ -3362,7 +1862,27 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
     const { error } = await supabase
       .from('users')
       .update({ role: 'admin' })
-      .eq('id', id);
+      .eq('id', id)
+      .eq('company_id', user.company_id);
+      
+    if (!error) {
+      fetchUsers();
+    }
+  };
+
+  const handleDeleteUser = async (id: number, email: string) => {
+    if (email === user.email) {
+      alert("You cannot delete your own profile.");
+      return;
+    }
+    
+    if (!confirm(`Are you sure you want to delete ${email}? This action cannot be undone.`)) return;
+    
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', id)
+      .eq('company_id', user.company_id);
       
     if (!error) {
       fetchUsers();
@@ -3371,102 +1891,256 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex justify-between items-start mb-12">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
-          <p className="text-slate-500 mt-1">View team members and promote roles. To invite new members, use <strong>Settings → Invite Team Members</strong>.</p>
+          <p className="text-slate-500 mt-1">Manage company accounts and permissions.</p>
         </div>
+        <button 
+          onClick={generateInvite}
+          className="btn-primary flex items-center gap-2"
+        >
+          <LinkIcon className="w-4 h-4" />
+          Invite Foreman
+        </button>
       </div>
+
+      {inviteLink && (
+        <div className="mb-8 p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex items-center justify-between">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="w-8 h-8 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0">
+              <LinkIcon className="w-4 h-4 text-emerald-600" />
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Invitation Link Generated</p>
+              <p className="text-sm text-slate-600 truncate font-mono">{inviteLink}</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              navigator.clipboard.writeText(inviteLink);
+              alert('Link copied to clipboard!');
+            }}
+            className="p-2 hover:bg-emerald-100 rounded-lg transition-colors text-emerald-600"
+          >
+            <Copy className="w-5 h-5" />
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-12 text-slate-400">Loading users...</div>
       ) : (
-        <>
-          {/* Current Users */}
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden mb-8">
-            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-              <h3 className="text-sm font-bold text-slate-700">Team Members</h3>
-            </div>
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-200">
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {users.map(u => (
-                  <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
-                          {u.name.charAt(0)}
-                        </div>
-                        <span className="font-bold text-slate-900">{u.name}</span>
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
+                        {u.name.charAt(0)}
                       </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-500">{u.email}</td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                        u.role === 'admin' 
-                          ? 'bg-purple-50 text-purple-700 border-purple-100' 
-                          : 'bg-blue-50 text-blue-700 border-blue-100'
-                      }`}>
-                        {u.role}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      {u.role !== 'admin' && u.id !== currentUser.id && (
+                      <span className="font-bold text-slate-900">{u.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{u.email}</td>
+                  <td className="px-6 py-4">
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                      u.role === 'admin' 
+                        ? 'bg-purple-50 text-purple-700 border-purple-100' 
+                        : 'bg-blue-50 text-blue-700 border-blue-100'
+                    }`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {u.role === 'foreman' && (
                         <button 
                           onClick={() => handlePromote(u.id)}
-                          className="text-xs font-bold text-brand hover:underline flex items-center gap-1 ml-auto"
+                          className="text-xs font-bold text-brand hover:underline flex items-center gap-1"
                         >
                           <Plus className="w-3 h-3" /> Promote to Admin
                         </button>
                       )}
+                      {u.email !== user.email && (
+                        <button 
+                          onClick={() => handleDeleteUser(u.id, u.email)}
+                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+                          title="Delete User"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SuperAdminDashboard = () => {
+  const [companies, setCompanies] = useState<any[]>([]);
+  const [invites, setInvites] = useState<Invitation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [inviteLink, setInviteLink] = useState('');
+
+  const fetchData = async () => {
+    setLoading(true);
+    const [compRes, invRes] = await Promise.all([
+      supabase.from('companies').select('*, users(count)').order('created_at', { ascending: false }),
+      supabase.from('invitations').select('*').is('used_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false })
+    ]);
+    if (compRes.data) setCompanies(compRes.data);
+    if (invRes.data) setInvites(invRes.data);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const generateCompanyInvite = async () => {
+    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    const { data, error } = await supabase
+      .from('invitations')
+      .insert([{
+        company_id: null,
+        role: 'admin',
+        token,
+        expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days
+      }])
+      .select()
+      .single();
+
+    if (!error && data) {
+      const url = `${window.location.origin}/?token=${token}`;
+      setInviteLink(url);
+      fetchData();
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-6xl mx-auto">
+      <div className="flex justify-between items-start mb-12">
+        <div>
+          <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">Super Admin</h2>
+          <p className="text-slate-500 mt-1">Manage global companies and invitations.</p>
+        </div>
+        <button 
+          onClick={generateCompanyInvite}
+          className="btn-primary flex items-center gap-2 shadow-lg shadow-brand/20"
+        >
+          <Plus className="w-5 h-5" />
+          Create Company Invite
+        </button>
+      </div>
+
+      {inviteLink && (
+        <div className="mb-12 p-6 bg-brand/5 border border-brand/10 rounded-3xl flex items-center justify-between">
+          <div className="flex items-center gap-4 overflow-hidden">
+            <div className="w-12 h-12 bg-brand/10 rounded-2xl flex items-center justify-center flex-shrink-0">
+              <LinkIcon className="w-6 h-6 text-brand" />
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-xs font-bold text-brand uppercase tracking-widest mb-1">Company Invitation Link</p>
+              <p className="text-lg text-slate-700 truncate font-mono">{inviteLink}</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => {
+              navigator.clipboard.writeText(inviteLink);
+              alert('Link copied to clipboard!');
+            }}
+            className="p-3 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all shadow-sm"
+          >
+            <Copy className="w-6 h-6 text-slate-600" />
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="lg:col-span-2 space-y-6">
+          <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <Briefcase className="w-5 h-5 text-slate-400" />
+            Registered Companies
+          </h3>
+          <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Company Name</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Users</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {companies.map(c => (
+                  <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <span className="font-bold text-slate-900">{c.name}</span>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">
+                      {c.users?.[0]?.count || 0} users
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-400">
+                      {new Date(c.created_at).toLocaleDateString()}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
 
-          {/* Pending Invitations */}
-          {invitations.length > 0 && (
-            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
-                <h3 className="text-sm font-bold text-slate-700">Pending Invitations</h3>
+        <div className="space-y-6">
+          <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+            <Clock className="w-5 h-5 text-slate-400" />
+            Pending Invites
+          </h3>
+          <div className="space-y-3">
+            {invites.map(inv => (
+              <div key={inv.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm">
+                <div className="flex justify-between items-start mb-2">
+                  <span className="px-2 py-0.5 bg-purple-50 text-purple-700 text-[10px] font-bold uppercase tracking-wider rounded border border-purple-100">
+                    {inv.role}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Exp: {new Date(inv.expires_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 truncate mb-3">{window.location.origin}/?token={inv.token}</p>
+                <button 
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/?token=${inv.token}`);
+                    alert('Link copied!');
+                  }}
+                  className="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-600 text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  <Copy className="w-3 h-3" /> Copy Link
+                </button>
               </div>
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {invitations.map(inv => (
-                    <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-4 text-sm text-slate-700 font-medium">{inv.email}</td>
-                      <td className="px-6 py-4">
-                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border bg-amber-50 text-amber-700 border-amber-100 capitalize">
-                          {inv.role}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 text-xs text-slate-400">
-                        {new Date(inv.created_at).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
+            ))}
+            {invites.length === 0 && (
+              <div className="text-center py-8 text-slate-400 text-sm italic">No active invitations</div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
@@ -3477,200 +2151,55 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [userEmail, setUserEmail] = useState<string | null>(null); // authenticated email (may have no profile yet)
-  const [company, setCompany] = useState<Company | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  // Invite-link flow: set when a valid ?invite=<token> is detected; cleared on auth
-  const [pendingInvitation, setPendingInvitation] = useState<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'> | null>(null);
-
-  // On mount: check for ?invite=<token> in the URL.
-  // If found and the user is not yet authenticated, look up the invitation and
-  // show the InviteSignup page directly (no email step).
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const inviteToken = params.get('invite');
-    if (!inviteToken) return;
-
-    // Remove the token from the URL so it isn't re-processed on refresh
-    const pathWithoutQuery = window.location.pathname;
-    window.history.replaceState({}, '', pathWithoutQuery);
-
-    const handleInviteToken = async () => {
-      // Skip if user is already authenticated
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (sessionData?.session) return;
-
-      const { data } = await supabase.rpc('get_invitation_by_token', {
-        p_token: inviteToken,
-      });
-
-      const rows = data as Array<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>> | null;
-      const inv = rows?.[0];
-      if (inv?.email) {
-        setPendingInvitation(inv);
-      }
-    };
-
-    handleInviteToken();
-  }, []);
 
   useEffect(() => {
-    // onAuthStateChange fires INITIAL_SESSION on mount (equivalent to getSession),
-    // so we only subscribe once here to avoid double-calling fetchProfile.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
-        if (session?.user) {
-          fetchProfile(session.user.email!);
-        } else {
-          setAuthReady(true);
-        }
-      } else if (event === 'SIGNED_OUT') {
-        setUser(null);
-        setUserEmail(null);
-        setCompany(null);
-        setPendingInvitation(null);
+    // Check initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchProfile(session.user.email!);
+      } else {
         setAuthReady(true);
       }
-      // TOKEN_REFRESHED and other events are intentionally ignored to prevent
-      // the account-setup page from re-appearing mid-session.
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchProfile(session.user.email!);
+      } else {
+        setUser(null);
+        setAuthReady(true);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (email: string) => {
-    // Always record the authenticated email so AccountSetup can use it
-    setUserEmail(email);
-    // NOTE: pendingInvitation is intentionally NOT cleared here.
-    // If InviteSignup is still processing (accept_invitation hasn't completed),
-    // we must keep it set so InviteSignup stays mounted. It will be cleared by
-    // handleAccountSetupComplete once the profile is successfully created, or on
-    // sign-out.
-
     const { data, error } = await supabase
       .from('users')
       .select('*')
       .eq('email', email)
-      .maybeSingle();
+      .single();
 
-    if (!error && data && ((data as User).company_id || (data as User).role === 'super_admin')) {
-      // Fully registered user — load their company and go to the main app.
-      // Super admins have no company_id; skip the company fetch for them.
-      const profile = data as User;
-      setUser(profile);
-      setPendingInvitation(null); // Profile found — no longer need the pending invitation
-
-      if (profile.company_id) {
-        const { data: companyData } = await supabase
-          .from('companies')
-          .select('id, name')
-          .eq('id', profile.company_id!)
-          .single();
-        if (companyData) setCompany(companyData as Company);
-      }
+    if (!error && data) {
+      setUser(data as User);
     } else {
-      // No profile (or profile without company) found.
-      // Check if InviteSignup stored a name in localStorage because email
-      // confirmation was required (signUp returned no session). If so, try to
-      // accept the invitation now that we have an authenticated session.
-      const pendingRaw = localStorage.getItem('stp_pending_invite_name');
-      let acceptedViaStorage = false;
-      if (pendingRaw) {
-        try {
-          const pending = JSON.parse(pendingRaw) as { email: string; name: string };
-          if (pending.email === email) {
-            const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
-              p_user_name: pending.name,
-            });
-            localStorage.removeItem('stp_pending_invite_name');
-            if (!rpcError && rpcData) {
-              const result = rpcData as { company_id: string; role: string };
-              if (result?.company_id) {
-                const { data: profileData } = await supabase
-                  .from('users')
-                  .select('*')
-                  .eq('email', email)
-                  .single();
-                if (profileData) {
-                  const profile = profileData as User;
-                  setUser(profile);
-                  setPendingInvitation(null);
-                  if (profile.company_id) {
-                    const { data: companyData } = await supabase
-                      .from('companies')
-                      .select('id, name')
-                      .eq('id', profile.company_id)
-                      .single();
-                    if (companyData) setCompany(companyData as Company);
-                  }
-                  acceptedViaStorage = true;
-                }
-              }
-            }
-          } else {
-            // Stale entry for a different email — discard it
-            localStorage.removeItem('stp_pending_invite_name');
-          }
-        } catch (parseErr) {
-          console.warn('[InviteSignup] Could not parse stp_pending_invite_name from localStorage:', parseErr);
-          localStorage.removeItem('stp_pending_invite_name');
-        }
-      }
-      if (!acceptedViaStorage) {
-        // Show AccountSetup (which will look for a pending invitation)
-        setUser(null);
-      }
+      // Fallback if profile not found
+      setUser({
+        id: 0,
+        name: email.split('@')[0],
+        email: email,
+        role: 'foreman'
+      });
     }
-
     setAuthReady(true);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
-
-  const handleAccountSetupComplete = async (companyId: string, role: string, emailOverride?: string) => {
-    const email = emailOverride ?? userEmail;
-    if (!email) return;
-
-    // Re-fetch the full profile now that accept_invitation has created it
-    const { data: profileData } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email)
-      .single();
-
-    if (profileData) {
-      setUser(profileData as User);
-      setUserEmail(email);
-    } else {
-      // Fallback: build minimal profile from what we know
-      setUser({ id: 0, name: email.split('@')[0], email, role: role as User['role'], company_id: companyId });
-      setUserEmail(email);
-    }
-
-    setPendingInvitation(null);
-
-    const { data: companyData } = await supabase
-      .from('companies')
-      .select('id, name')
-      .eq('id', companyId)
-      .single();
-    if (companyData) setCompany(companyData as Company);
-    setAuthReady(true);
-  };
-
-  // Invite-link flow: keep InviteSignup visible until the profile is fully created.
-  // Using !user (not !userEmail) so the component stays mounted during the race
-  // between onAuthStateChange → fetchProfile and the accept_invitation RPC call.
-  if (pendingInvitation && !user) {
-    return (
-      <InviteSignup
-        invitation={pendingInvitation}
-        onComplete={handleAccountSetupComplete}
-      />
-    );
-  }
 
   if (!authReady) {
     return (
@@ -3680,34 +2209,12 @@ export default function App() {
     );
   }
 
-  // Not authenticated → show Login page
-  if (!userEmail) {
-    return <Login />;
-  }
-
-  // Authenticated but no company profile yet → show Account Setup
   if (!user) {
-    return (
-      <AccountSetup
-        userEmail={userEmail}
-        onComplete={handleAccountSetupComplete}
-      />
-    );
-  }
-
-  // Super admin → show the platform-wide admin console (no company context)
-  if (user.role === 'super_admin') {
-    return <SuperAdminPanel user={user} onLogout={handleLogout} />;
+    return <Login onLogin={setUser} />;
   }
 
   return (
-    <Layout
-      activeTab={activeTab}
-      setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }}
-      user={user}
-      companyName={company?.name || ''}
-      onLogout={handleLogout}
-    >
+    <Layout activeTab={activeTab} setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }} user={user} onLogout={handleLogout}>
       {activeTab === 'jobs' && (
         selectedJobId ? (
           <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
@@ -3715,8 +2222,9 @@ export default function App() {
           <Dashboard onSelectJob={setSelectedJobId} user={user} />
         )
       )}
-      {activeTab === 'users' && user.role === 'admin' && <UserManagement currentUser={user} />}
+      {activeTab === 'users' && user.role === 'admin' && <UserManagement user={user} />}
       {activeTab === 'settings' && user.role === 'admin' && <Settings user={user} />}
+      {activeTab === 'super-admin' && user.role === 'super_admin' && <SuperAdminDashboard />}
     </Layout>
   );
 }
