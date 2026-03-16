@@ -405,6 +405,7 @@ const AccountSetup = ({
   onComplete: (companyId: string, role: string) => void;
 }) => {
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -450,6 +451,38 @@ const AccountSetup = ({
     }
   };
 
+  const handleRegisterCompany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = name.trim();
+    const trimmedCompany = companyName.trim();
+    if (!trimmedName || !trimmedCompany) {
+      setError('Please fill in your name and company name.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
+        p_user_name: trimmedName,
+        p_company_name: trimmedCompany,
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = data as { company_id: string; role: string } | null;
+      if (result?.company_id && result?.role) {
+        onComplete(result.company_id, result.role);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -463,28 +496,73 @@ const AccountSetup = ({
     );
   }
 
-  // No invitation found — show a helpful message instead of a setup form
+  // No invitation found — show a "Register Your Company" form for new admins
   if (invitation === null) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
+          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
         >
-          <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Mail className="w-7 h-7 text-amber-600" />
+          <div className="flex flex-col items-center mb-8">
+            <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+              <Building2 className="w-6 h-6 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Company</h2>
+            <p className="text-slate-500 text-sm text-center mt-1">
+              Welcome! Enter your name and company to get started.
+            </p>
           </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Invitation Required</h2>
-          <p className="text-slate-500 text-sm mb-2">
-            Your account (<strong>{userEmail}</strong>) does not have a pending invitation.
-          </p>
-          <p className="text-slate-500 text-sm mb-8">
-            Please contact your administrator to receive an invitation link.
-          </p>
-          <button onClick={handleLogout} className="btn-secondary w-full py-3">
-            Sign Out
-          </button>
+
+          <form onSubmit={handleRegisterCompany} className="space-y-4">
+            {error && (
+              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                {error}
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+              <input
+                type="text"
+                required
+                autoFocus
+                className="input-field"
+                placeholder="John Doe"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                type="text"
+                required
+                className="input-field"
+                placeholder="Acme Services LLC"
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+              <input
+                type="email"
+                disabled
+                className="input-field opacity-60 cursor-not-allowed"
+                value={userEmail}
+              />
+            </div>
+            <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+              {loading ? 'Setting up…' : 'Create Company & Continue'}
+            </button>
+          </form>
+
+          <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+            <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600">
+              Sign out
+            </button>
+          </div>
         </motion.div>
       </div>
     );
