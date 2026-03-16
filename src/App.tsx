@@ -405,7 +405,6 @@ const AccountSetup = ({
   onComplete: (companyId: string, role: string) => void;
 }) => {
   const [name, setName] = useState('');
-  const [companyName, setCompanyName] = useState('');
   const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -451,38 +450,6 @@ const AccountSetup = ({
     }
   };
 
-  const handleRegisterCompany = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmedName = name.trim();
-    const trimmedCompany = companyName.trim();
-    if (!trimmedName || !trimmedCompany) {
-      setError('Please fill in your name and company name.');
-      return;
-    }
-    setLoading(true);
-    setError('');
-
-    try {
-      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
-        p_user_name: trimmedName,
-        p_company_name: trimmedCompany,
-      });
-
-      if (rpcError) throw rpcError;
-
-      const result = data as { company_id: string; role: string } | null;
-      if (result?.company_id && result?.role) {
-        onComplete(result.company_id, result.role);
-      } else {
-        throw new Error('Unexpected response from server.');
-      }
-    } catch (err: any) {
-      setError(err.message || 'An error occurred. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -496,7 +463,7 @@ const AccountSetup = ({
     );
   }
 
-  // No invitation found — show a "Register Your Company" form for new admins
+  // No invitation found — show an "invitation required" message
   if (invitation === null) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -506,59 +473,19 @@ const AccountSetup = ({
           className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
         >
           <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-              <Building2 className="w-6 h-6 text-white" />
+            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center mb-4">
+              <Lock className="w-6 h-6 text-amber-600" />
             </div>
-            <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Company</h2>
-            <p className="text-slate-500 text-sm text-center mt-1">
-              Welcome! Enter your name and company to get started.
+            <h2 className="text-2xl font-bold font-display text-slate-900">Invitation Required</h2>
+            <p className="text-slate-500 text-sm text-center mt-2">
+              You're signed in but don't have an account profile yet.
+            </p>
+            <p className="text-slate-500 text-sm text-center mt-2">
+              Please use the invite link you received to complete your setup. If you don't have one, contact your company administrator.
             </p>
           </div>
 
-          <form onSubmit={handleRegisterCompany} className="space-y-4">
-            {error && (
-              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-                {error}
-              </div>
-            )}
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-              <input
-                type="text"
-                required
-                autoFocus
-                className="input-field"
-                placeholder="John Doe"
-                value={name}
-                onChange={e => setName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
-              <input
-                type="text"
-                required
-                className="input-field"
-                placeholder="Acme Services LLC"
-                value={companyName}
-                onChange={e => setCompanyName(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-              <input
-                type="email"
-                disabled
-                className="input-field opacity-60 cursor-not-allowed"
-                value={userEmail}
-              />
-            </div>
-            <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
-              {loading ? 'Setting up…' : 'Create Company & Continue'}
-            </button>
-          </form>
-
-          <div className="mt-6 pt-5 border-t border-slate-100 text-center">
+          <div className="pt-4 border-t border-slate-100 text-center">
             <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600">
               Sign out
             </button>
@@ -617,6 +544,364 @@ const AccountSetup = ({
           </button>
         </form>
       </motion.div>
+    </div>
+  );
+};
+
+// --- Super Admin Panel (only shown to users with role = 'super_admin') ---
+const SuperAdminPanel = ({ user, onLogout }: { user: User; onLogout: () => void }) => {
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loadingCompanies, setLoadingCompanies] = useState(true);
+
+  // Create company form
+  const [newCompanyName, setNewCompanyName] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [newInviteLink, setNewInviteLink] = useState('');
+  const [newInviteLinkCopied, setNewInviteLinkCopied] = useState(false);
+
+  // Generate admin invite for existing company form
+  const [existingCompanyId, setExistingCompanyId] = useState('');
+  const [existingAdminEmail, setExistingAdminEmail] = useState('');
+  const [existingInviteLoading, setExistingInviteLoading] = useState(false);
+  const [existingInviteError, setExistingInviteError] = useState('');
+  const [existingInviteLink, setExistingInviteLink] = useState('');
+  const [existingInviteLinkCopied, setExistingInviteLinkCopied] = useState(false);
+
+  const fetchCompanies = async () => {
+    setLoadingCompanies(true);
+    const { data } = await supabase
+      .from('companies')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (data) setCompanies(data as Company[]);
+    setLoadingCompanies(false);
+  };
+
+  useEffect(() => {
+    fetchCompanies();
+  }, []);
+
+  const handleCreateCompany = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreating(true);
+    setCreateError('');
+    setNewInviteLink('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('create_company_as_super_admin', {
+        p_company_name: newCompanyName.trim(),
+        p_admin_email: newAdminEmail.trim().toLowerCase(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = data as { company_id: string; invite_token: string } | null;
+      if (result?.company_id && result?.invite_token) {
+        setNewInviteLink(`${window.location.origin}/?invite=${result.invite_token}`);
+        setNewCompanyName('');
+        setNewAdminEmail('');
+        fetchCompanies();
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setCreateError(err.message || 'Failed to create company.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleGenerateAdminInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExistingInviteLoading(true);
+    setExistingInviteError('');
+    setExistingInviteLink('');
+
+    try {
+      const { data: invData, error: insertError } = await supabase
+        .from('invitations')
+        .insert({
+          email: existingAdminEmail.trim().toLowerCase(),
+          company_id: existingCompanyId,
+          role: 'admin',
+        })
+        .select('invite_token')
+        .single();
+
+      if (insertError) throw insertError;
+
+      const token = (invData as Pick<Invitation, 'invite_token'>).invite_token;
+      setExistingInviteLink(`${window.location.origin}/?invite=${token}`);
+      setExistingAdminEmail('');
+      setExistingCompanyId('');
+    } catch (err: any) {
+      setExistingInviteError(err.message || 'Failed to generate invite link.');
+    } finally {
+      setExistingInviteLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      {/* Header */}
+      <header className="bg-slate-900 text-white px-8 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow-lg shadow-brand/20">
+            <Briefcase className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="font-bold text-lg font-display">Service Track Pro</h1>
+            <p className="text-xs text-slate-400">Super Admin Console</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-sm text-slate-300">{user.email}</span>
+          <button
+            onClick={onLogout}
+            className="text-sm text-slate-400 hover:text-white transition-colors"
+          >
+            Sign out
+          </button>
+        </div>
+      </header>
+
+      <main className="p-8 max-w-5xl mx-auto space-y-12">
+        {/* Create New Company */}
+        <section>
+          <div className="mb-6">
+            <h2 className="text-3xl font-bold text-slate-900 font-display">Create New Company</h2>
+            <p className="text-slate-500 mt-1 text-sm">
+              Creates the company and generates an admin invite link in one step.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+            <form onSubmit={handleCreateCompany} className="space-y-4">
+              {createError && (
+                <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                  {createError}
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                    Company Name
+                  </label>
+                  <input
+                    required
+                    className="input-field"
+                    placeholder="Acme Services LLC"
+                    value={newCompanyName}
+                    onChange={e => setNewCompanyName(e.target.value)}
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                    Initial Admin Email
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    className="input-field"
+                    placeholder="admin@acme.com"
+                    value={newAdminEmail}
+                    onChange={e => setNewAdminEmail(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={creating}
+                className="btn-primary flex items-center gap-2 disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                {creating ? 'Creating…' : 'Create Company & Generate Admin Invite'}
+              </button>
+            </form>
+
+            {newInviteLink && (
+              <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">
+                  Admin Invite Link Generated
+                </p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={newInviteLink}
+                    className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(newInviteLink).then(() => {
+                        setNewInviteLinkCopied(true);
+                        setTimeout(() => setNewInviteLinkCopied(false), 2500);
+                      });
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${
+                      newInviteLinkCopied
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {newInviteLinkCopied ? (
+                      <><Check className="w-3.5 h-3.5" /> Copied!</>
+                    ) : (
+                      <><Copy className="w-3.5 h-3.5" /> Copy</>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-emerald-600 mt-2">
+                  Share this link with the new company admin. When they click it they'll be guided through account setup.
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Generate Admin Invite for Existing Company */}
+        {companies.length > 0 && (
+          <section>
+            <div className="mb-6">
+              <h2 className="text-3xl font-bold text-slate-900 font-display">Invite Admin to Existing Company</h2>
+              <p className="text-slate-500 mt-1 text-sm">
+                Generate a new admin invite link for a company that's already been created.
+              </p>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+              <form onSubmit={handleGenerateAdminInvite} className="space-y-4">
+                {existingInviteError && (
+                  <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                    {existingInviteError}
+                  </div>
+                )}
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                      Select Company
+                    </label>
+                    <select
+                      required
+                      className="input-field"
+                      value={existingCompanyId}
+                      onChange={e => setExistingCompanyId(e.target.value)}
+                    >
+                      <option value="">Choose a company…</option>
+                      {companies.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                      Admin Email
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      className="input-field"
+                      placeholder="admin@company.com"
+                      value={existingAdminEmail}
+                      onChange={e => setExistingAdminEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  disabled={existingInviteLoading}
+                  className="btn-primary flex items-center gap-2 disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4" />
+                  {existingInviteLoading ? 'Generating…' : 'Generate Admin Invite Link'}
+                </button>
+              </form>
+
+              {existingInviteLink && (
+                <div className="mt-4 p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                  <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">
+                    Invite Link Generated
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={existingInviteLink}
+                      className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(existingInviteLink).then(() => {
+                          setExistingInviteLinkCopied(true);
+                          setTimeout(() => setExistingInviteLinkCopied(false), 2500);
+                        });
+                      }}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${
+                        existingInviteLinkCopied
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      {existingInviteLinkCopied ? (
+                        <><Check className="w-3.5 h-3.5" /> Copied!</>
+                      ) : (
+                        <><Copy className="w-3.5 h-3.5" /> Copy</>
+                      )}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-emerald-600 mt-2">
+                    Share this link with the new admin.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Companies List */}
+        <section>
+          <div className="mb-6">
+            <h2 className="text-3xl font-bold text-slate-900 font-display">
+              Companies {!loadingCompanies && `(${companies.length})`}
+            </h2>
+          </div>
+
+          {loadingCompanies ? (
+            <div className="text-slate-400 py-8 text-center">Loading…</div>
+          ) : companies.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center text-slate-400">
+              No companies yet. Create the first one above.
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Company</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Created</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">ID</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {companies.map(c => (
+                    <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4 text-sm font-bold text-slate-900">{c.name}</td>
+                      <td className="px-6 py-4 text-xs text-slate-400">
+                        {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="px-6 py-4 text-xs text-slate-400 font-mono">{c.id}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      </main>
     </div>
   );
 };
@@ -3171,17 +3456,20 @@ export default function App() {
       .eq('email', email)
       .maybeSingle();
 
-    if (!error && data && (data as User).company_id) {
-      // Fully registered user — load their company and go to the main app
+    if (!error && data && ((data as User).company_id || (data as User).role === 'super_admin')) {
+      // Fully registered user — load their company and go to the main app.
+      // Super admins have no company_id; skip the company fetch for them.
       const profile = data as User;
       setUser(profile);
 
-      const { data: companyData } = await supabase
-        .from('companies')
-        .select('id, name')
-        .eq('id', profile.company_id!)
-        .single();
-      if (companyData) setCompany(companyData as Company);
+      if (profile.company_id) {
+        const { data: companyData } = await supabase
+          .from('companies')
+          .select('id, name')
+          .eq('id', profile.company_id!)
+          .single();
+        if (companyData) setCompany(companyData as Company);
+      }
     } else {
       // No profile or profile without company — show AccountSetup
       setUser(null);
@@ -3256,6 +3544,11 @@ export default function App() {
         onComplete={handleAccountSetupComplete}
       />
     );
+  }
+
+  // Super admin → show the platform-wide admin console (no company context)
+  if (user.role === 'super_admin') {
+    return <SuperAdminPanel user={user} onLogout={handleLogout} />;
   }
 
   return (

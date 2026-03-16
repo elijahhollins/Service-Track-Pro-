@@ -45,7 +45,7 @@ export interface User {
   id: number;
   name: string;
   email: string;
-  role: 'admin' | 'foreman' | 'crew';
+  role: 'super_admin' | 'admin' | 'foreman' | 'crew';
   company_id?: string;
 }
 
