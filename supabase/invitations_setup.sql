@@ -69,9 +69,11 @@ CREATE OR REPLACE FUNCTION public.accept_invitation(p_user_name text)
   RETURNS json
   LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-  v_auth_email  text;
-  v_inv         record;
-  v_existing_id int;
+  v_auth_email    text;
+  v_inv           record;
+  v_existing_id   int;
+  v_existing_cid  uuid;
+  v_existing_role text;
 BEGIN
   -- Resolve the calling user's email from the Supabase Auth session
   SELECT email INTO v_auth_email
@@ -80,6 +82,21 @@ BEGIN
 
   IF v_auth_email IS NULL THEN
     RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Check whether a fully-set-up profile already exists for this user.
+  -- This handles re-entrant calls (e.g. when fetchProfile retries after a
+  -- race condition) so the function is idempotent.
+  SELECT id, company_id, role
+    INTO v_existing_id, v_existing_cid, v_existing_role
+  FROM   public.users
+  WHERE  email = v_auth_email;
+
+  IF v_existing_id IS NOT NULL AND v_existing_cid IS NOT NULL THEN
+    RETURN json_build_object(
+      'company_id', v_existing_cid::text,
+      'role',       v_existing_role
+    );
   END IF;
 
   -- Find the most recent pending invitation for this email
@@ -94,13 +111,8 @@ BEGIN
     RAISE EXCEPTION 'No pending invitation found for this email address.';
   END IF;
 
-  -- Check whether a profile row already exists
-  SELECT id INTO v_existing_id
-  FROM   public.users
-  WHERE  email = v_auth_email;
-
   IF v_existing_id IS NOT NULL THEN
-    -- Profile exists — update it with the invitation's company/role
+    -- Profile exists but has no company — update it with the invitation's company/role
     UPDATE public.users
     SET    company_id = v_inv.company_id,
            role       = v_inv.role,

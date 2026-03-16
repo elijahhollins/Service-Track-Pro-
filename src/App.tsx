@@ -232,7 +232,7 @@ const Login = () => {
 
         <div className="mt-8 pt-6 border-t border-slate-100 text-center">
           <p className="text-xs text-slate-400">
-            New to the platform? Contact your administrator to receive an invitation.
+            New to the platform? Sign in or create an account to get started.
           </p>
         </div>
       </motion.div>
@@ -255,6 +255,7 @@ const InviteSignup = ({
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,14 +273,26 @@ const InviteSignup = ({
     try {
       // Create the auth account. If the email is already registered the admin
       // should revoke the old invitation and ask the user to sign in directly.
-      const { error: signUpError } = await supabase.auth.signUp({
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: invitation.email,
         password,
       });
 
       if (signUpError) throw signUpError;
 
-      // Accept the invitation — creates the profile row
+      if (!signUpData.session) {
+        // Supabase requires email confirmation before a session is issued.
+        // Store the name so fetchProfile can call accept_invitation automatically
+        // after the user clicks the confirmation link and is signed in.
+        localStorage.setItem(
+          'stp_pending_invite_name',
+          JSON.stringify({ email: invitation.email, name: name.trim() }),
+        );
+        setAwaitingConfirmation(true);
+        return;
+      }
+
+      // Session immediately available — accept the invitation now
       const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
         p_user_name: name.trim(),
       });
@@ -306,97 +319,114 @@ const InviteSignup = ({
         animate={{ opacity: 1, y: 0 }}
         className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
       >
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-            <UserPlus className="w-6 h-6 text-white" />
-          </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900">Create Your Account</h2>
-          <p className="text-slate-500 text-sm text-center mt-1">
-            You've been invited as <strong className="capitalize">{invitation.role}</strong>. Set up your account to get started.
-          </p>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
-              {error}
+        {awaitingConfirmation ? (
+          <div className="flex flex-col items-center text-center">
+            <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center mb-4">
+              <Mail className="w-6 h-6 text-emerald-600" />
             </div>
-          )}
-
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-            <input
-              type="text"
-              required
-              autoFocus
-              className="input-field"
-              placeholder="John Doe"
-              value={name}
-              onChange={e => setName(e.target.value)}
-            />
+            <h2 className="text-2xl font-bold font-display text-slate-900">Check Your Email</h2>
+            <p className="text-slate-500 text-sm mt-3">
+              We sent a confirmation link to <strong>{invitation.email}</strong>.
+            </p>
+            <p className="text-slate-500 text-sm mt-2">
+              Click the link in that email to verify your address and complete your account setup automatically.
+            </p>
           </div>
-
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
-            <input
-              type="email"
-              disabled
-              className="input-field opacity-60 cursor-not-allowed"
-              value={invitation.email}
-            />
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
-            <div className="relative">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                <Lock className="w-4 h-4" />
+        ) : (
+          <>
+            <div className="flex flex-col items-center mb-8">
+              <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+                <UserPlus className="w-6 h-6 text-white" />
               </div>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                className="input-field pl-10 pr-10"
-                placeholder="Min. 8 characters"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                onClick={() => setShowPassword(v => !v)}
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              <h2 className="text-2xl font-bold font-display text-slate-900">Create Your Account</h2>
+              <p className="text-slate-500 text-sm text-center mt-1">
+                You've been invited as <strong className="capitalize">{invitation.role}</strong>. Set up your account to get started.
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                  {error}
+                </div>
+              )}
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  className="input-field"
+                  placeholder="John Doe"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+                <input
+                  type="email"
+                  disabled
+                  className="input-field opacity-60 cursor-not-allowed"
+                  value={invitation.email}
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    className="input-field pl-10 pr-10"
+                    placeholder="Min. 8 characters"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    onClick={() => setShowPassword(v => !v)}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Confirm Password</label>
+                <div className="relative">
+                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                    <Lock className="w-4 h-4" />
+                  </div>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    className="input-field pl-10 pr-10"
+                    placeholder="Re-enter your password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+                {loading ? 'Creating account…' : 'Create Account'}
               </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Confirm Password</label>
-            <div className="relative">
-              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-                <Lock className="w-4 h-4" />
-              </div>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                className="input-field pl-10 pr-10"
-                placeholder="Re-enter your password"
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
-            {loading ? 'Creating account…' : 'Create Account'}
-          </button>
-        </form>
+            </form>
+          </>
+        )}
       </motion.div>
     </div>
   );
 };
 
-// --- Account Setup Page (shown when authenticated user has no company — magic-link landing) ---
+// --- Account Setup Page (shown when authenticated user has no company) ---
 const AccountSetup = ({
   userEmail,
   onComplete,
@@ -405,6 +435,7 @@ const AccountSetup = ({
   onComplete: (companyId: string, role: string) => void;
 }) => {
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -425,7 +456,8 @@ const AccountSetup = ({
     fetchInvitation();
   }, [userEmail]);
 
-  const handleAccept = async (e: React.FormEvent) => {
+  // Called when the user has a pending invitation
+  const handleAcceptInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -450,6 +482,33 @@ const AccountSetup = ({
     }
   };
 
+  // Called when the user has no invitation — self-service registration
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
+        p_user_name: name.trim(),
+        p_company_name: companyName.trim(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = data as { company_id: string; role: string } | null;
+      if (result?.company_id) {
+        onComplete(result.company_id, result.role);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Registration failed. Please try again or contact support if the problem persists.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -463,7 +522,7 @@ const AccountSetup = ({
     );
   }
 
-  // No invitation found — show an "invitation required" message
+  // No invitation found — show self-service registration form
   if (invitation === null) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -473,19 +532,59 @@ const AccountSetup = ({
           className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
         >
           <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center mb-4">
-              <Lock className="w-6 h-6 text-amber-600" />
+            <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+              <UserPlus className="w-6 h-6 text-white" />
             </div>
-            <h2 className="text-2xl font-bold font-display text-slate-900">Invitation Required</h2>
-            <p className="text-slate-500 text-sm text-center mt-2">
-              You're signed in but don't have an account profile yet.
-            </p>
-            <p className="text-slate-500 text-sm text-center mt-2">
-              Please use the invite link you received to complete your setup. If you don't have one, contact your company administrator.
+            <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Account</h2>
+            <p className="text-slate-500 text-sm text-center mt-1">
+              Enter your name and company to get started. Creating a new company makes you the admin; entering an existing company name joins it as a foreman.
             </p>
           </div>
 
-          <div className="pt-4 border-t border-slate-100 text-center">
+          <form onSubmit={handleRegister} className="space-y-4">
+            {error && (
+              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                {error}
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+              <input
+                type="text"
+                required
+                autoFocus
+                className="input-field"
+                placeholder="John Doe"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                type="text"
+                required
+                className="input-field"
+                placeholder="Acme Services"
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+              <input
+                type="email"
+                disabled
+                className="input-field opacity-60 cursor-not-allowed"
+                value={userEmail}
+              />
+            </div>
+            <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+              {loading ? 'Setting up…' : 'Get Started'}
+            </button>
+          </form>
+
+          <div className="pt-4 mt-2 border-t border-slate-100 text-center">
             <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600">
               Sign out
             </button>
@@ -513,7 +612,7 @@ const AccountSetup = ({
           </p>
         </div>
 
-        <form onSubmit={handleAccept} className="space-y-4">
+        <form onSubmit={handleAcceptInvitation} className="space-y-4">
           {error && (
             <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
               {error}
@@ -3435,6 +3534,7 @@ export default function App() {
         setUser(null);
         setUserEmail(null);
         setCompany(null);
+        setPendingInvitation(null);
         setAuthReady(true);
       }
       // TOKEN_REFRESHED and other events are intentionally ignored to prevent
@@ -3447,8 +3547,11 @@ export default function App() {
   const fetchProfile = async (email: string) => {
     // Always record the authenticated email so AccountSetup can use it
     setUserEmail(email);
-    // Clear pending invite once the user is authenticated
-    setPendingInvitation(null);
+    // NOTE: pendingInvitation is intentionally NOT cleared here.
+    // If InviteSignup is still processing (accept_invitation hasn't completed),
+    // we must keep it set so InviteSignup stays mounted. It will be cleared by
+    // handleAccountSetupComplete once the profile is successfully created, or on
+    // sign-out.
 
     const { data, error } = await supabase
       .from('users')
@@ -3461,6 +3564,7 @@ export default function App() {
       // Super admins have no company_id; skip the company fetch for them.
       const profile = data as User;
       setUser(profile);
+      setPendingInvitation(null); // Profile found — no longer need the pending invitation
 
       if (profile.company_id) {
         const { data: companyData } = await supabase
@@ -3471,8 +3575,57 @@ export default function App() {
         if (companyData) setCompany(companyData as Company);
       }
     } else {
-      // No profile or profile without company — show AccountSetup
-      setUser(null);
+      // No profile (or profile without company) found.
+      // Check if InviteSignup stored a name in localStorage because email
+      // confirmation was required (signUp returned no session). If so, try to
+      // accept the invitation now that we have an authenticated session.
+      const pendingRaw = localStorage.getItem('stp_pending_invite_name');
+      let acceptedViaStorage = false;
+      if (pendingRaw) {
+        try {
+          const pending = JSON.parse(pendingRaw) as { email: string; name: string };
+          if (pending.email === email) {
+            const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
+              p_user_name: pending.name,
+            });
+            localStorage.removeItem('stp_pending_invite_name');
+            if (!rpcError && rpcData) {
+              const result = rpcData as { company_id: string; role: string };
+              if (result?.company_id) {
+                const { data: profileData } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('email', email)
+                  .single();
+                if (profileData) {
+                  const profile = profileData as User;
+                  setUser(profile);
+                  setPendingInvitation(null);
+                  if (profile.company_id) {
+                    const { data: companyData } = await supabase
+                      .from('companies')
+                      .select('id, name')
+                      .eq('id', profile.company_id)
+                      .single();
+                    if (companyData) setCompany(companyData as Company);
+                  }
+                  acceptedViaStorage = true;
+                }
+              }
+            }
+          } else {
+            // Stale entry for a different email — discard it
+            localStorage.removeItem('stp_pending_invite_name');
+          }
+        } catch (parseErr) {
+          console.warn('[InviteSignup] Could not parse stp_pending_invite_name from localStorage:', parseErr);
+          localStorage.removeItem('stp_pending_invite_name');
+        }
+      }
+      if (!acceptedViaStorage) {
+        // Show AccountSetup (which will look for a pending invitation)
+        setUser(null);
+      }
     }
 
     setAuthReady(true);
@@ -3513,8 +3666,10 @@ export default function App() {
     setAuthReady(true);
   };
 
-  // Invite-link flow: show the direct signup page before auth is resolved
-  if (pendingInvitation && !userEmail) {
+  // Invite-link flow: keep InviteSignup visible until the profile is fully created.
+  // Using !user (not !userEmail) so the component stays mounted during the race
+  // between onAuthStateChange → fetchProfile and the accept_invitation RPC call.
+  if (pendingInvitation && !user) {
     return (
       <InviteSignup
         invitation={pendingInvitation}
