@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS public.invitations (
     created_at   timestamp with time zone DEFAULT now()
 );
 
+-- invite_token: a unique shareable UUID embedded in the invite URL.
+-- Admins copy <app-url>/?invite=<invite_token> and send it to invitees.
+ALTER TABLE public.invitations
+    ADD COLUMN IF NOT EXISTS invite_token uuid UNIQUE DEFAULT gen_random_uuid();
+
 
 -- ────────────────────────────────────────────────────────────────
 -- STEP 2 — ROW LEVEL SECURITY
@@ -131,12 +136,36 @@ GRANT EXECUTE ON FUNCTION public.accept_invitation TO authenticated;
 GRANT ALL ON public.invitations TO authenticated;
 
 
+-- ────────────────────────────────────────────────────────────────
+-- STEP 4 — get_invitation_by_token FUNCTION
+-- ────────────────────────────────────────────────────────────────
+-- Called by the app when an unauthenticated user visits a
+-- ?invite=<token> URL. Returns the invitation details so the app
+-- can trigger signInWithOtp for the correct email.
+-- Callable by anon since the user is not signed in yet.
+
+CREATE OR REPLACE FUNCTION public.get_invitation_by_token(p_token uuid)
+  RETURNS TABLE(id uuid, email text, company_id uuid, role text)
+  LANGUAGE sql SECURITY DEFINER STABLE AS $$
+  SELECT id, email, company_id, role
+  FROM   public.invitations
+  WHERE  invite_token = p_token
+    AND  accepted_at  IS NULL
+  LIMIT  1
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_invitation_by_token TO anon, authenticated;
+
+
 -- =============================================================================
 -- DONE!
 --
 -- Next steps:
---   1. Admins use the "Invite User" form in the app to create invitations.
---   2. The app sends a magic link via supabase.auth.signInWithOtp.
---   3. Invitees click the link, land on the Account Setup page, enter their
---      name, and accept_invitation completes their profile.
+--   1. Admins use the "Invite Team Members" section in Settings to generate
+--      invite links. Each link embeds an invite_token UUID.
+--   2. Admins copy the link and send it to the invitee (email, SMS, etc.).
+--   3. Invitee clicks the link → app detects ?invite=<token> → calls
+--      signInWithOtp for their email → invitee gets a magic sign-in email.
+--   4. Invitee clicks the magic link → lands on Account Setup → enters name
+--      → accept_invitation RPC creates their profile.
 -- =============================================================================

@@ -2058,18 +2058,29 @@ const Settings = ({ user }: { user: User }) => {
   const [logoError, setLogoError] = useState('');
   const logoInputRef = useRef<HTMLInputElement>(null);
 
+  // Invite Team Members
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'foreman' | 'crew' | 'admin'>('foreman');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [pendingInvitations, setPendingInvitations] = useState<Invitation[]>([]);
+
   const fetchAll = async () => {
-    const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+    const [empRes, eqRes, matRes, tempRes, invRes] = await Promise.all([
       supabase.from('employees').select('*'),
       supabase.from('equipment').select('*'),
       supabase.from('materials').select('*'),
-      supabase.from('templates').select('*')
+      supabase.from('templates').select('*'),
+      supabase.from('invitations').select('*').is('accepted_at', null).order('created_at', { ascending: false }),
     ]);
     
     if (empRes.data) setEmployees(empRes.data);
     if (eqRes.data) setEquipment(eqRes.data);
     if (matRes.data) setMaterials(matRes.data);
     if (tempRes.data) setTemplates(tempRes.data);
+    if (invRes.data) setPendingInvitations(invRes.data as Invitation[]);
   };
 
   useEffect(() => {
@@ -2079,6 +2090,53 @@ const Settings = ({ user }: { user: User }) => {
   const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0 });
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0 });
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0 });
+
+  const handleGenerateInviteLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim() || !user.company_id) return;
+    setInviteLoading(true);
+    setInviteError('');
+    setGeneratedLink('');
+
+    try {
+      const { data: invData, error: insertError } = await supabase
+        .from('invitations')
+        .insert({
+          email: inviteEmail.trim().toLowerCase(),
+          company_id: user.company_id,
+          role: inviteRole,
+          invited_by: user.id,
+        })
+        .select('invite_token')
+        .single();
+
+      if (insertError) throw insertError;
+
+      const token = (invData as Invitation).invite_token;
+      const inviteUrl = `${window.location.origin}/?invite=${token}`;
+      setGeneratedLink(inviteUrl);
+      setInviteEmail('');
+      setInviteRole('foreman');
+      fetchAll();
+    } catch (err: any) {
+      setInviteError(err.message || 'Failed to generate invite link.');
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(generatedLink).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    });
+  };
+
+  const handleRevokeInvitation = async (id: string) => {
+    if (!confirm('Revoke this invitation?')) return;
+    await supabase.from('invitations').delete().eq('id', id);
+    fetchAll();
+  };
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2447,6 +2505,133 @@ const Settings = ({ user }: { user: User }) => {
         </section>
       </div>
 
+      {/* ── Invite Team Members ────────────────────────────────────── */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
+            <UserPlus className="w-5 h-5 text-brand" />
+          </div>
+          <div>
+            <h3 className="text-2xl font-bold text-slate-900 font-display">Invite Team Members</h3>
+            <p className="text-sm text-slate-500">Generate a magic-link invite to send to new admins, foremen, or crew.</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+            <p className="text-sm font-medium text-slate-600">Enter the invitee's email and role, then click <strong>Generate Link</strong>. Copy the link and send it — the recipient will be guided through account setup.</p>
+          </div>
+
+          <form onSubmit={handleGenerateInviteLink} className="p-6 space-y-4">
+            {inviteError && (
+              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">{inviteError}</div>
+            )}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  className="input-field"
+                  placeholder="team@example.com"
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                />
+              </div>
+              <div className="w-full sm:w-36">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role</label>
+                <select
+                  className="input-field"
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as 'foreman' | 'crew' | 'admin')}
+                >
+                  <option value="crew">Crew</option>
+                  <option value="foreman">Foreman</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button type="submit" disabled={inviteLoading} className="btn-primary flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
+                  <Send className="w-4 h-4" />
+                  {inviteLoading ? 'Generating…' : 'Generate Link'}
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {/* Generated link display */}
+          {generatedLink && (
+            <div className="px-6 pb-6">
+              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">Invite Link Generated</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={generatedLink}
+                    className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${linkCopied ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    {linkCopied ? <><Check className="w-3.5 h-3.5" /> Copied!</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+                  </button>
+                </div>
+                <p className="text-[11px] text-emerald-600 mt-2">Send this link to the invitee. When they click it, they'll be guided through account setup.</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Pending Invitations */}
+        {pendingInvitations.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <h4 className="text-sm font-bold text-slate-700">Pending Invitations</h4>
+            </div>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pendingInvitations.map(inv => (
+                  <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-3 text-sm text-slate-700 font-medium">{inv.email}</td>
+                    <td className="px-6 py-3">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border capitalize ${
+                        inv.role === 'admin'
+                          ? 'bg-purple-50 text-purple-700 border-purple-100'
+                          : inv.role === 'foreman'
+                          ? 'bg-blue-50 text-blue-700 border-blue-100'
+                          : 'bg-amber-50 text-amber-700 border-amber-100'
+                      }`}>
+                        {inv.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-xs text-slate-400">{new Date(inv.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 text-right">
+                      <button
+                        onClick={() => handleRevokeInvitation(inv.id)}
+                        className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1 ml-auto"
+                      >
+                        <X className="w-3 h-3" /> Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Modals for Adding */}
       <AnimatePresence>
         {isAddingEmployee && (
@@ -2536,12 +2721,6 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showInviteForm, setShowInviteForm] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'foreman' | 'crew' | 'admin'>('foreman');
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteSuccess, setInviteSuccess] = useState('');
-  const [inviteError, setInviteError] = useState('');
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -2575,134 +2754,14 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
     }
   };
 
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail.trim() || !currentUser.company_id) return;
-    setInviteLoading(true);
-    setInviteError('');
-    setInviteSuccess('');
-
-    try {
-      // Insert the invitation record
-      const { error: insertError } = await supabase.from('invitations').insert({
-        email: inviteEmail.trim().toLowerCase(),
-        company_id: currentUser.company_id,
-        role: inviteRole,
-        invited_by: currentUser.id,
-      });
-
-      if (insertError) throw insertError;
-
-      // Send a magic link to the invitee's email
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: inviteEmail.trim().toLowerCase(),
-        options: { shouldCreateUser: true },
-      });
-
-      if (otpError) {
-        // The invitation record was created; warn but don't block
-        console.warn('Magic link send failed:', otpError.message);
-        setInviteSuccess(`Invitation created for ${inviteEmail}. Note: email delivery failed — share the app link manually.`);
-      } else {
-        setInviteSuccess(`Invitation sent to ${inviteEmail}. They will receive a magic sign-in link.`);
-      }
-
-      setInviteEmail('');
-      setInviteRole('foreman');
-      setShowInviteForm(false);
-      fetchUsers();
-    } catch (err: any) {
-      setInviteError(err.message || 'Failed to send invitation.');
-    } finally {
-      setInviteLoading(false);
-    }
-  };
-
-  const handleRevokeInvitation = async (id: string) => {
-    if (!confirm('Revoke this invitation?')) return;
-    await supabase.from('invitations').delete().eq('id', id);
-    fetchUsers();
-  };
-
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-8 flex items-start justify-between gap-4">
+      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
-          <p className="text-slate-500 mt-1">Manage company accounts and permissions.</p>
+          <p className="text-slate-500 mt-1">View team members and promote roles. To invite new members, use <strong>Settings → Invite Team Members</strong>.</p>
         </div>
-        <button
-          onClick={() => { setShowInviteForm(!showInviteForm); setInviteError(''); setInviteSuccess(''); }}
-          className="btn-primary flex items-center gap-2 flex-shrink-0"
-        >
-          <UserPlus className="w-4 h-4" />
-          Invite User
-        </button>
       </div>
-
-      {/* Invite User Form */}
-      <AnimatePresence>
-        {showInviteForm && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-8"
-          >
-            <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-              <Send className="w-4 h-4 text-brand" />
-              Send an Invitation
-            </h3>
-            <form onSubmit={handleInvite} className="space-y-4">
-              {inviteError && (
-                <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">{inviteError}</div>
-              )}
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
-                  <input
-                    type="email"
-                    required
-                    className="input-field"
-                    placeholder="crew@example.com"
-                    value={inviteEmail}
-                    onChange={e => setInviteEmail(e.target.value)}
-                  />
-                </div>
-                <div className="w-36">
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role</label>
-                  <select
-                    className="input-field"
-                    value={inviteRole}
-                    onChange={e => setInviteRole(e.target.value as 'foreman' | 'crew' | 'admin')}
-                  >
-                    <option value="crew">Crew</option>
-                    <option value="foreman">Foreman</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <button type="submit" disabled={inviteLoading} className="btn-primary flex items-center gap-2 disabled:opacity-50">
-                  <Send className="w-4 h-4" />
-                  {inviteLoading ? 'Sending…' : 'Send Magic Link'}
-                </button>
-                <button type="button" onClick={() => setShowInviteForm(false)} className="btn-secondary">
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Success banner */}
-      {inviteSuccess && (
-        <div className="mb-6 p-4 rounded-xl border bg-emerald-50 text-emerald-700 border-emerald-100 flex items-start gap-3 text-sm">
-          <Check className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{inviteSuccess}</span>
-        </div>
-      )}
 
       {loading ? (
         <div className="text-center py-12 text-slate-400">Loading users...</div>
@@ -2771,7 +2830,6 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
                     <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
                     <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
                     <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
-                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2785,14 +2843,6 @@ const UserManagement = ({ currentUser }: { currentUser: User }) => {
                       </td>
                       <td className="px-6 py-4 text-xs text-slate-400">
                         {new Date(inv.created_at).toLocaleDateString()}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        <button
-                          onClick={() => handleRevokeInvitation(inv.id)}
-                          className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1 ml-auto"
-                        >
-                          <X className="w-3 h-3" /> Revoke
-                        </button>
                       </td>
                     </tr>
                   ))}
@@ -2815,6 +2865,49 @@ export default function App() {
   const [userEmail, setUserEmail] = useState<string | null>(null); // authenticated email (may have no profile yet)
   const [company, setCompany] = useState<Company | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  // Invite-link flow: when ?invite=<token> is in the URL and not yet signed-in
+  const [inviteLinkEmail, setInviteLinkEmail] = useState<string | null>(null);
+  const [inviteLinkSent, setInviteLinkSent] = useState(false);
+
+  // On mount: check for ?invite=<token> in the URL.
+  // If found and the user is not yet authenticated, look up the invitation and
+  // send a magic link to the invitee's email so they can sign in.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const inviteToken = params.get('invite');
+    if (!inviteToken) return;
+
+    // Remove the token from the URL so it isn't re-processed on refresh
+    const pathWithoutQuery = window.location.pathname;
+    window.history.replaceState({}, '', pathWithoutQuery);
+
+    const handleInviteToken = async () => {
+      const { data } = await supabase.rpc('get_invitation_by_token', {
+        p_token: inviteToken,
+      });
+
+      const rows = data as Array<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>> | null;
+      const inv = rows?.[0];
+      if (!inv?.email) return; // token invalid or already accepted
+
+      // Check if there's already an active session — user may have already signed in
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session) return; // already authenticated; onAuthStateChange handles the rest
+
+      // Send the magic link to the invitee's email
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: inv.email,
+        options: { shouldCreateUser: true },
+      });
+
+      if (!otpError) {
+        setInviteLinkEmail(inv.email);
+        setInviteLinkSent(true);
+      }
+    };
+
+    handleInviteToken();
+  }, []);
 
   useEffect(() => {
     // onAuthStateChange fires INITIAL_SESSION on mount (equivalent to getSession),
@@ -2842,6 +2935,8 @@ export default function App() {
   const fetchProfile = async (email: string) => {
     // Always record the authenticated email so AccountSetup can use it
     setUserEmail(email);
+    // Clear invite-link state once the user is authenticated
+    setInviteLinkSent(false);
 
     const { data, error } = await supabase
       .from('users')
@@ -2896,6 +2991,33 @@ export default function App() {
       .single();
     if (companyData) setCompany(companyData as Company);
   };
+
+  // Invite-link flow: show "check your email" page before auth is resolved
+  if (inviteLinkSent && !userEmail) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
+        >
+          <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Mail className="w-7 h-7 text-emerald-600" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Check Your Email</h2>
+          <p className="text-slate-500 text-sm mb-6">
+            We sent a magic sign-in link to <strong>{inviteLinkEmail}</strong>. Click the link to complete your account setup.
+          </p>
+          <button
+            onClick={() => setInviteLinkSent(false)}
+            className="text-sm text-brand font-medium hover:underline"
+          >
+            Sign in with a different method
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   if (!authReady) {
     return (

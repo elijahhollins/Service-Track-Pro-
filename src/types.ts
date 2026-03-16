@@ -55,6 +55,7 @@ export interface Invitation {
   company_id: string;
   role: 'admin' | 'foreman' | 'crew';
   invited_by?: number;
+  invite_token: string;
   accepted_at?: string;
   created_at: string;
 }
