@@ -232,7 +232,7 @@ const Login = () => {
 
         <div className="mt-8 pt-6 border-t border-slate-100 text-center">
           <p className="text-xs text-slate-400">
-            New to the platform? Contact your administrator to receive an invitation.
+            New to the platform? Sign in or create an account to get started.
           </p>
         </div>
       </motion.div>
@@ -426,7 +426,7 @@ const InviteSignup = ({
   );
 };
 
-// --- Account Setup Page (shown when authenticated user has no company — magic-link landing) ---
+// --- Account Setup Page (shown when authenticated user has no company) ---
 const AccountSetup = ({
   userEmail,
   onComplete,
@@ -435,6 +435,7 @@ const AccountSetup = ({
   onComplete: (companyId: string, role: string) => void;
 }) => {
   const [name, setName] = useState('');
+  const [companyName, setCompanyName] = useState('');
   const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -455,7 +456,8 @@ const AccountSetup = ({
     fetchInvitation();
   }, [userEmail]);
 
-  const handleAccept = async (e: React.FormEvent) => {
+  // Called when the user has a pending invitation
+  const handleAcceptInvitation = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
@@ -480,6 +482,33 @@ const AccountSetup = ({
     }
   };
 
+  // Called when the user has no invitation — self-service registration
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
+        p_user_name: name.trim(),
+        p_company_name: companyName.trim(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = data as { company_id: string; role: string } | null;
+      if (result?.company_id) {
+        onComplete(result.company_id, result.role);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Registration failed. Please try again or contact support if the problem persists.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
@@ -493,7 +522,7 @@ const AccountSetup = ({
     );
   }
 
-  // No invitation found — show an "invitation required" message
+  // No invitation found — show self-service registration form
   if (invitation === null) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -503,19 +532,59 @@ const AccountSetup = ({
           className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
         >
           <div className="flex flex-col items-center mb-8">
-            <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center mb-4">
-              <Lock className="w-6 h-6 text-amber-600" />
+            <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+              <UserPlus className="w-6 h-6 text-white" />
             </div>
-            <h2 className="text-2xl font-bold font-display text-slate-900">Invitation Required</h2>
-            <p className="text-slate-500 text-sm text-center mt-2">
-              You're signed in but don't have an account profile yet.
-            </p>
-            <p className="text-slate-500 text-sm text-center mt-2">
-              Please use the invite link you received to complete your setup. If you don't have one, contact your company administrator.
+            <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Account</h2>
+            <p className="text-slate-500 text-sm text-center mt-1">
+              Enter your name and company to get started. Creating a new company makes you the admin; entering an existing company name joins it as a foreman.
             </p>
           </div>
 
-          <div className="pt-4 border-t border-slate-100 text-center">
+          <form onSubmit={handleRegister} className="space-y-4">
+            {error && (
+              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+                {error}
+              </div>
+            )}
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+              <input
+                type="text"
+                required
+                autoFocus
+                className="input-field"
+                placeholder="John Doe"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                type="text"
+                required
+                className="input-field"
+                placeholder="Acme Services"
+                value={companyName}
+                onChange={e => setCompanyName(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+              <input
+                type="email"
+                disabled
+                className="input-field opacity-60 cursor-not-allowed"
+                value={userEmail}
+              />
+            </div>
+            <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+              {loading ? 'Setting up…' : 'Get Started'}
+            </button>
+          </form>
+
+          <div className="pt-4 mt-2 border-t border-slate-100 text-center">
             <button onClick={handleLogout} className="text-sm text-slate-400 hover:text-slate-600">
               Sign out
             </button>
@@ -543,7 +612,7 @@ const AccountSetup = ({
           </p>
         </div>
 
-        <form onSubmit={handleAccept} className="space-y-4">
+        <form onSubmit={handleAcceptInvitation} className="space-y-4">
           {error && (
             <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
               {error}
