@@ -147,6 +147,79 @@ GRANT EXECUTE ON FUNCTION public.accept_invitation TO authenticated;
 -- Grant table-level access (RLS still applies)
 GRANT ALL ON public.invitations TO authenticated;
 
+-- Ensure authenticated users can read public.users profiles
+-- (required for UserManagement page and FK constraint checks on invited_by)
+GRANT SELECT ON public.users TO authenticated;
+
+
+-- ────────────────────────────────────────────────────────────────
+-- STEP 3b — create_invitation FUNCTION
+-- ────────────────────────────────────────────────────────────────
+-- Called by company admins to generate an invite link for a new user.
+-- SECURITY DEFINER bypasses RLS and the table-privilege check that
+-- would otherwise fire when enforcing the invited_by FK on public.users,
+-- fixing the "permission denied for table users" error.
+
+CREATE OR REPLACE FUNCTION public.create_invitation(
+  p_email text,
+  p_role  text DEFAULT 'foreman'
+)
+  RETURNS json
+  LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_auth_email  text;
+  v_company_id  uuid;
+  v_caller_role text;
+  v_caller_id   int;
+  v_clean_email text;
+  v_token       uuid;
+BEGIN
+  -- Resolve the calling user's email from the Supabase Auth session
+  SELECT email INTO v_auth_email
+  FROM   auth.users
+  WHERE  id = auth.uid();
+
+  IF v_auth_email IS NULL THEN
+    RAISE EXCEPTION 'Not authenticated';
+  END IF;
+
+  -- Look up the caller's profile
+  SELECT id, company_id, role INTO v_caller_id, v_company_id, v_caller_role
+  FROM   public.users
+  WHERE  email = v_auth_email;
+
+  IF v_company_id IS NULL THEN
+    RAISE EXCEPTION 'Your account is not associated with a company';
+  END IF;
+
+  IF v_caller_role NOT IN ('admin', 'super_admin') THEN
+    RAISE EXCEPTION 'Only admins can create invitations';
+  END IF;
+
+  -- Validate and normalise the target email (callers may pass raw input)
+  v_clean_email := lower(trim(p_email));
+  IF v_clean_email = '' OR v_clean_email NOT LIKE '%@%.%' THEN
+    RAISE EXCEPTION 'Invalid email address: %', p_email;
+  END IF;
+
+  -- Validate role value
+  IF p_role NOT IN ('admin', 'foreman', 'crew') THEN
+    RAISE EXCEPTION 'Invalid role: %', p_role;
+  END IF;
+
+  -- Insert the invitation (runs as postgres, bypasses RLS/FK privilege check)
+  INSERT INTO public.invitations (email, company_id, role, invited_by)
+  VALUES (v_clean_email, v_company_id, p_role, v_caller_id)
+  RETURNING invite_token INTO v_token;
+
+  RETURN json_build_object(
+    'invite_token', v_token::text
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.create_invitation TO authenticated;
+
 
 -- ────────────────────────────────────────────────────────────────
 -- STEP 4 — get_invitation_by_token FUNCTION
