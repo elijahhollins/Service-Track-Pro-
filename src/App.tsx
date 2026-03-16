@@ -75,67 +75,56 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
     
     try {
       if (isSignUp) {
-        let companyId = invitation?.company_id;
-
-        if (!companyId && invitation?.role === 'admin') {
-          // 1. Create company if it's a new company invitation
-          const { data: companyData, error: companyError } = await supabase
-            .from('companies')
-            .insert([{ name: companyName }])
-            .select()
-            .single();
-
-          if (companyError) throw companyError;
-          companyId = companyData.id;
-        } else if (!companyId && !invitation) {
-          // Legacy sign up or manual sign up (if allowed)
-          const { data: companyData, error: companyError } = await supabase
-            .from('companies')
-            .insert([{ name: companyName }])
-            .select()
-            .single();
-
-          if (companyError) throw companyError;
-          companyId = companyData.id;
-        }
-
-        // 2. Sign up to Supabase Auth
+        // 1. Sign up to Supabase Auth first to get a UID
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email,
           password,
         });
 
         if (authError) throw authError;
+        if (!authData.user) throw new Error('Signup failed');
 
-        if (authData.user) {
-          // 3. Create profile in public.users
-          const { error: profileError } = await supabase
-            .from('users')
-            .insert([{ 
-              id: authData.user.id,
-              name: name || email.split('@')[0], 
-              email, 
-              password, 
-              role: invitation?.role || 'admin',
-              company_id: companyId
-            }]);
+        const userId = authData.user.id;
+        let companyId = invitation?.company_id;
 
-          if (profileError) console.error('Profile creation error:', profileError);
-          
-          // 4. Mark invitation as used
-          if (invitation) {
-            await supabase
-              .from('invitations')
-              .update({ used_at: new Date().toISOString() })
-              .eq('id', invitation.id);
-          }
+        // 2. Create company if it's a new company invitation
+        if (!companyId && (invitation?.role === 'admin' || !invitation)) {
+          const { data: companyData, error: companyError } = await supabase
+            .from('companies')
+            .insert([{ name: companyName }])
+            .select()
+            .single();
 
-          setError('Account created! You can now sign in.');
-          setIsSignUp(false);
-          setInvitation(null);
-          // Clear URL params
-          window.history.replaceState({}, document.title, window.location.pathname);
+          if (companyError) throw companyError;
+          companyId = companyData.id;
         }
+
+        // 3. Create profile in public.users
+        const { error: profileError } = await supabase
+          .from('users')
+          .insert([{ 
+            id: userId,
+            name: name || email.split('@')[0], 
+            email, 
+            password, 
+            role: invitation?.role || 'admin',
+            company_id: companyId
+          }]);
+
+        if (profileError) throw profileError;
+        
+        // 4. Mark invitation as used
+        if (invitation) {
+          await supabase
+            .from('invitations')
+            .update({ used_at: new Date().toISOString() })
+            .eq('id', invitation.id);
+        }
+
+        setError('Account created! You can now sign in.');
+        setIsSignUp(false);
+        setInvitation(null);
+        window.history.replaceState({}, document.title, window.location.pathname);
       } else {
         // Sign in
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
