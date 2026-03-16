@@ -11,6 +11,21 @@
 
 
 -- ────────────────────────────────────────────────────────────────
+-- STEP 0 — EXTEND users_role_check TO ALLOW 'super_admin'
+-- ────────────────────────────────────────────────────────────────
+-- The original check constraint on public.users only permits 'admin'
+-- and 'foreman'.  Drop and recreate it to also permit 'super_admin'
+-- so that create_super_admin.sql can insert the platform owner row.
+
+ALTER TABLE public.users
+    DROP CONSTRAINT IF EXISTS users_role_check;
+
+ALTER TABLE public.users
+    ADD CONSTRAINT users_role_check
+    CHECK (role IN ('admin', 'foreman', 'super_admin'));
+
+
+-- ────────────────────────────────────────────────────────────────
 -- STEP 1 — is_super_admin() HELPER
 -- ────────────────────────────────────────────────────────────────
 -- Returns true when the calling authenticated user has role = 'super_admin'.
