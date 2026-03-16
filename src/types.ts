@@ -45,8 +45,19 @@ export interface User {
   id: number;
   name: string;
   email: string;
-  role: 'admin' | 'foreman';
+  role: 'admin' | 'foreman' | 'crew';
   company_id?: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  company_id: string;
+  role: 'admin' | 'foreman' | 'crew';
+  invited_by?: number;
+  invite_token: string;
+  accepted_at?: string;
+  created_at: string;
 }
 
 export interface Job {

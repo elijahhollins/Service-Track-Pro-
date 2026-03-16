@@ -27,10 +27,15 @@ import {
   MapPin,
   Globe,
   Edit3,
-  Save
+  Save,
+  UserPlus,
+  Send,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Company, CompanySettings, CustomerDetails, InvoiceDetails } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Company, CompanySettings, CustomerDetails, InvoiceDetails, Invitation } from './types';
 import { supabase } from './supabase';
 
 // --- LocalStorage Helpers ---
@@ -98,12 +103,11 @@ function saveInvoiceDetails(jobId: string | number, details: InvoiceDetails) {
 
 // --- Components ---
 
-const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
+const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [useMagicLink, setUseMagicLink] = useState(false);
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -113,85 +117,23 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
     setError('');
     
     try {
-      if (isSignUp) {
-        if (!companyName.trim()) {
-          setError('Please enter your company name.');
-          setLoading(false);
-          return;
-        }
-
-        // 1. Sign up to Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email,
-          password,
+      const normalizedEmail = email.trim().toLowerCase();
+      if (useMagicLink) {
+        // Send a magic link — onAuthStateChange handles the SIGNED_IN event
+        const { error: otpError } = await supabase.auth.signInWithOtp({
+          email: normalizedEmail,
+          options: { shouldCreateUser: true },
         });
-
-        if (authError) throw authError;
-
-        if (authData.user) {
-          if (authData.session) {
-            // Session is immediately available (email confirmation disabled).
-            // 2. Create profile + company via secure RPC (handles RLS bootstrap)
-            const { data: rpcData, error: regError } = await supabase.rpc('register_with_company', {
-              p_user_name: name || email.split('@')[0],
-              p_company_name: companyName.trim(),
-            });
-
-            if (regError) {
-              console.error('Registration error:', regError);
-              setError('Account created but company setup failed: ' + regError.message);
-            } else {
-              // Fetch the newly created profile and log the user in directly.
-              // This avoids the race condition where onAuthStateChange fires
-              // before the profile is created and shows the company modal.
-              const { data: profile } = await supabase
-                .from('users')
-                .select('*')
-                .eq('email', email)
-                .single();
-              if (profile) {
-                onLogin(profile as User);
-              } else {
-                setError('Account created! You can now sign in.');
-                setIsSignUp(false);
-              }
-            }
-          } else {
-            // Email confirmation is required — the session won't be available
-            // until the user clicks the confirmation link.  The company modal
-            // will appear automatically on first login.
-            setError('Account created! Please check your email to confirm your account before signing in.');
-            setIsSignUp(false);
-          }
-        }
+        if (otpError) throw otpError;
+        setMagicLinkSent(true);
       } else {
-        // Sign in
-        const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-          email,
+        // Sign in with password — onAuthStateChange handles the SIGNED_IN event
+        const { error: authError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
           password,
         });
-
         if (authError) throw authError;
-
-        if (authData.user) {
-          const { data: profile, error: profileError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', email)
-            .single();
-
-          if (profileError) {
-            console.warn('Profile not found in public.users, using fallback');
-            onLogin({
-              id: 0,
-              name: email.split('@')[0],
-              email: email,
-              role: 'foreman'
-            });
-          } else {
-            onLogin(profile as User);
-          }
-        }
+        // App state is updated automatically via onAuthStateChange → fetchProfile
       }
     } catch (err: any) {
       setError(err.message || 'An error occurred');
@@ -199,6 +141,32 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
       setLoading(false);
     }
   };
+
+  if (magicLinkSent) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
+        >
+          <div className="w-14 h-14 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Mail className="w-7 h-7 text-emerald-600" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Check Your Email</h2>
+          <p className="text-slate-500 text-sm mb-6">
+            We sent a magic sign-in link to <strong>{email}</strong>. Click the link in the email to access your account.
+          </p>
+          <button
+            onClick={() => { setMagicLinkSent(false); setUseMagicLink(false); }}
+            className="text-sm text-brand font-medium hover:underline"
+          >
+            Back to Sign In
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -212,44 +180,14 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             <Briefcase className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold font-display text-slate-900">Service Track Pro</h1>
-          <p className="text-slate-500">{isSignUp ? 'Create your account' : 'Sign in to your account'}</p>
+          <p className="text-slate-500">{useMagicLink ? 'Sign in with a magic link' : 'Sign in to your account'}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className={`p-3 text-sm rounded-lg border ${error.includes('created') ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
+            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
               {error}
             </div>
-          )}
-          
-          {isSignUp && (
-            <>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-                <input 
-                  type="text" 
-                  required 
-                  className="input-field" 
-                  placeholder="John Doe"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
-                <input 
-                  type="text" 
-                  required 
-                  className="input-field" 
-                  placeholder="e.g. Acme Services LLC"
-                  value={companyName}
-                  onChange={e => setCompanyName(e.target.value)}
-                />
-                <p className="text-[10px] text-slate-400 mt-1">
-                  Enter your company name. If the company already exists you will join it; otherwise a new company will be created and you will be the admin.
-                </p>
-              </div>
-            </>
           )}
 
           <div>
@@ -258,72 +196,99 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
               type="email" 
               required 
               className="input-field" 
-              placeholder="admin@example.com"
+              placeholder="you@example.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
             />
           </div>
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
-            <input 
-              type="password" 
-              required 
-              className="input-field" 
-              placeholder="••••••••"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
-          </div>
+
+          {!useMagicLink && (
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+              <input 
+                type="password" 
+                required 
+                className="input-field" 
+                placeholder="••••••••"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+            </div>
+          )}
+
           <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
-            {loading ? 'Processing...' : (isSignUp ? 'Create Account' : 'Sign In')}
+            {loading ? 'Processing...' : (useMagicLink ? 'Send Magic Link' : 'Sign In')}
           </button>
         </form>
 
         <div className="mt-6 text-center">
           <button 
-            onClick={() => setIsSignUp(!isSignUp)}
+            onClick={() => { setUseMagicLink(!useMagicLink); setError(''); }}
             className="text-sm text-brand font-medium hover:underline"
           >
-            {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+            {useMagicLink ? 'Sign in with password instead' : 'Sign in with a magic link'}
           </button>
         </div>
 
-        {!isSignUp && (
-          <div className="mt-8 pt-6 border-t border-slate-100 text-center">
-            <p className="text-xs text-slate-400">
-              Note: Demo accounts from SQL must be "Signed Up" first to enable Authentication.
-            </p>
-          </div>
-        )}
+        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+          <p className="text-xs text-slate-400">
+            New to the platform? Contact your administrator to receive an invitation.
+          </p>
+        </div>
       </motion.div>
     </div>
   );
 };
 
-// --- Company Registration Modal (shown when user has no company_id) ---
-const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (companyId: string, role: string) => void }) => {
-  const [companyName, setCompanyName] = useState('');
-  const [error, setError] = useState('');
+// --- Invite Signup Page (shown when a valid ?invite=<token> URL is opened) ---
+// The user signs up directly with name + password; no email step.
+const InviteSignup = ({
+  invitation,
+  onComplete,
+}: {
+  invitation: Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>;
+  onComplete: (companyId: string, role: string, emailOverride: string) => void;
+}) => {
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyName.trim()) return;
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
     setLoading(true);
     setError('');
 
     try {
-      const { data, error: rpcError } = await supabase.rpc('register_with_company', {
-        p_user_name:    user.name,
-        p_company_name: companyName.trim(),
+      // Create the auth account. If the email is already registered the admin
+      // should revoke the old invitation and ask the user to sign in directly.
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: invitation.email,
+        password,
+      });
+
+      if (signUpError) throw signUpError;
+
+      // Accept the invitation — creates the profile row
+      const { data: rpcData, error: rpcError } = await supabase.rpc('accept_invitation', {
+        p_user_name: name.trim(),
       });
 
       if (rpcError) throw rpcError;
 
-      const rpcResult = data as { company_id: string; role: string } | null;
-      const companyId = rpcResult?.company_id;
-      if (companyId) {
-        onComplete(companyId, rpcResult?.role ?? 'foreman');
+      const result = rpcData as { company_id: string; role: string } | null;
+      if (result?.company_id) {
+        onComplete(result.company_id, result.role, invitation.email);
       } else {
         throw new Error('Unexpected response from server.');
       }
@@ -335,7 +300,7 @@ const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (co
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -343,11 +308,11 @@ const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (co
       >
         <div className="flex flex-col items-center mb-8">
           <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
-            <Building2 className="w-6 h-6 text-white" />
+            <UserPlus className="w-6 h-6 text-white" />
           </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900">Set Up Your Company</h2>
+          <h2 className="text-2xl font-bold font-display text-slate-900">Create Your Account</h2>
           <p className="text-slate-500 text-sm text-center mt-1">
-            Enter your company name to get started. Create a new company or join an existing one.
+            You've been invited as <strong className="capitalize">{invitation.role}</strong>. Set up your account to get started.
           </p>
         </div>
 
@@ -357,22 +322,220 @@ const CompanyRegistration = ({ user, onComplete }: { user: User; onComplete: (co
               {error}
             </div>
           )}
+
           <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+            <input
+              type="text"
+              required
+              autoFocus
+              className="input-field"
+              placeholder="John Doe"
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+            <input
+              type="email"
+              disabled
+              className="input-field opacity-60 cursor-not-allowed"
+              value={invitation.email}
+            />
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Password</label>
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                className="input-field pl-10 pr-10"
+                placeholder="Min. 8 characters"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                onClick={() => setShowPassword(v => !v)}
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Confirm Password</label>
+            <div className="relative">
+              <div className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+                <Lock className="w-4 h-4" />
+              </div>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                className="input-field pl-10 pr-10"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-2 disabled:opacity-50">
+            {loading ? 'Creating account…' : 'Create Account'}
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
+// --- Account Setup Page (shown when authenticated user has no company — magic-link landing) ---
+const AccountSetup = ({
+  userEmail,
+  onComplete,
+}: {
+  userEmail: string;
+  onComplete: (companyId: string, role: string) => void;
+}) => {
+  const [name, setName] = useState('');
+  const [invitation, setInvitation] = useState<Invitation | null | undefined>(undefined); // undefined = loading
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Look up a pending invitation for this email when the component mounts
+  useEffect(() => {
+    const fetchInvitation = async () => {
+      const { data } = await supabase
+        .from('invitations')
+        .select('*')
+        .eq('email', userEmail)
+        .is('accepted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      setInvitation((data as Invitation | null) ?? null);
+    };
+    fetchInvitation();
+  }, [userEmail]);
+
+  const handleAccept = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      const { data, error: rpcError } = await supabase.rpc('accept_invitation', {
+        p_user_name: name.trim(),
+      });
+
+      if (rpcError) throw rpcError;
+
+      const result = data as { company_id: string; role: string } | null;
+      if (result?.company_id) {
+        onComplete(result.company_id, result.role);
+      } else {
+        throw new Error('Unexpected response from server.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  // Loading state while we check for an invitation
+  if (invitation === undefined) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <div className="text-white font-display text-xl animate-pulse">Loading…</div>
+      </div>
+    );
+  }
+
+  // No invitation found — show a helpful message instead of a setup form
+  if (invitation === null) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl text-center"
+        >
+          <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Mail className="w-7 h-7 text-amber-600" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Invitation Required</h2>
+          <p className="text-slate-500 text-sm mb-2">
+            Your account (<strong>{userEmail}</strong>) does not have a pending invitation.
+          </p>
+          <p className="text-slate-500 text-sm mb-8">
+            Please contact your administrator to receive an invitation link.
+          </p>
+          <button onClick={handleLogout} className="btn-secondary w-full py-3">
+            Sign Out
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Invitation found — let the user complete their profile
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl"
+      >
+        <div className="flex flex-col items-center mb-8">
+          <div className="w-12 h-12 bg-brand rounded-xl flex items-center justify-center mb-4 shadow-lg shadow-brand/20">
+            <UserPlus className="w-6 h-6 text-white" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900">Complete Your Profile</h2>
+          <p className="text-slate-500 text-sm text-center mt-1">
+            You've been invited as <strong className="capitalize">{invitation.role}</strong>. Enter your name to finish setting up your account.
+          </p>
+        </div>
+
+        <form onSubmit={handleAccept} className="space-y-4">
+          {error && (
+            <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">
+              {error}
+            </div>
+          )}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
             <input
               type="text"
               required
               className="input-field"
-              placeholder="e.g. Acme Services LLC"
-              value={companyName}
-              onChange={e => setCompanyName(e.target.value)}
+              placeholder="John Doe"
+              value={name}
+              onChange={e => setName(e.target.value)}
             />
-            <p className="text-[10px] text-slate-400 mt-1">
-              If this company already exists you will join it as a team member; otherwise a new company will be created and you will be the admin.
-            </p>
+          </div>
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email</label>
+            <input
+              type="email"
+              disabled
+              className="input-field opacity-60 cursor-not-allowed"
+              value={userEmail}
+            />
           </div>
           <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
-            {loading ? 'Setting up…' : 'Continue'}
+            {loading ? 'Setting up…' : 'Get Started'}
           </button>
         </form>
       </motion.div>
@@ -2054,18 +2217,29 @@ const Settings = ({ user }: { user: User }) => {
   const [logoError, setLogoError] = useState('');
   const logoInputRef = useRef<HTMLInputElement>(null);
 
+  // Invite Team Members
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'foreman' | 'crew' | 'admin'>('foreman');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [generatedLink, setGeneratedLink] = useState('');
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+  const [pendingInvitations, setPendingInvitations] = useState<Invitation[]>([]);
+
   const fetchAll = async () => {
-    const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+    const [empRes, eqRes, matRes, tempRes, invRes] = await Promise.all([
       supabase.from('employees').select('*'),
       supabase.from('equipment').select('*'),
       supabase.from('materials').select('*'),
-      supabase.from('templates').select('*')
+      supabase.from('templates').select('*'),
+      supabase.from('invitations').select('*').is('accepted_at', null).order('created_at', { ascending: false }),
     ]);
     
     if (empRes.data) setEmployees(empRes.data);
     if (eqRes.data) setEquipment(eqRes.data);
     if (matRes.data) setMaterials(matRes.data);
     if (tempRes.data) setTemplates(tempRes.data);
+    if (invRes.data) setPendingInvitations(invRes.data as Invitation[]);
   };
 
   useEffect(() => {
@@ -2075,6 +2249,53 @@ const Settings = ({ user }: { user: User }) => {
   const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0 });
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0 });
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0 });
+
+  const handleGenerateInviteLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim() || !user.company_id) return;
+    setInviteLoading(true);
+    setInviteError('');
+    setGeneratedLink('');
+
+    try {
+      const { data: invData, error: insertError } = await supabase
+        .from('invitations')
+        .insert({
+          email: inviteEmail.trim().toLowerCase(),
+          company_id: user.company_id,
+          role: inviteRole,
+          invited_by: user.id,
+        })
+        .select('invite_token')
+        .single();
+
+      if (insertError) throw insertError;
+
+      const token = (invData as Invitation).invite_token;
+      const inviteUrl = `${window.location.origin}/?invite=${token}`;
+      setGeneratedLink(inviteUrl);
+      setInviteEmail('');
+      setInviteRole('foreman');
+      fetchAll();
+    } catch (err: any) {
+      setInviteError(err.message || 'Failed to generate invite link.');
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(generatedLink).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2500);
+    });
+  };
+
+  const handleRevokeInvitation = async (id: string) => {
+    if (!confirm('Revoke this invitation?')) return;
+    await supabase.from('invitations').delete().eq('id', id);
+    fetchAll();
+  };
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2443,6 +2664,133 @@ const Settings = ({ user }: { user: User }) => {
         </section>
       </div>
 
+      {/* ── Invite Team Members ────────────────────────────────────── */}
+      <section className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-brand/10 rounded-xl flex items-center justify-center">
+            <UserPlus className="w-5 h-5 text-brand" />
+          </div>
+          <div>
+            <h3 className="text-2xl font-bold text-slate-900 font-display">Invite Team Members</h3>
+            <p className="text-sm text-slate-500">Generate a magic-link invite to send to new admins, foremen, or crew.</p>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="p-6 border-b border-slate-100 bg-slate-50/50">
+            <p className="text-sm font-medium text-slate-600">Enter the invitee's email and role, then click <strong>Generate Link</strong>. Copy the link and send it — the recipient will be guided through account setup.</p>
+          </div>
+
+          <form onSubmit={handleGenerateInviteLink} className="p-6 space-y-4">
+            {inviteError && (
+              <div className="p-3 text-sm rounded-lg border bg-red-50 text-red-600 border-red-100">{inviteError}</div>
+            )}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  className="input-field"
+                  placeholder="team@example.com"
+                  value={inviteEmail}
+                  onChange={e => setInviteEmail(e.target.value)}
+                />
+              </div>
+              <div className="w-full sm:w-36">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role</label>
+                <select
+                  className="input-field"
+                  value={inviteRole}
+                  onChange={e => setInviteRole(e.target.value as 'foreman' | 'crew' | 'admin')}
+                >
+                  <option value="crew">Crew</option>
+                  <option value="foreman">Foreman</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button type="submit" disabled={inviteLoading} className="btn-primary flex items-center gap-2 disabled:opacity-50 whitespace-nowrap">
+                  <Send className="w-4 h-4" />
+                  {inviteLoading ? 'Generating…' : 'Generate Link'}
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {/* Generated link display */}
+          {generatedLink && (
+            <div className="px-6 pb-6">
+              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+                <p className="text-xs font-bold text-emerald-700 uppercase tracking-widest mb-2">Invite Link Generated</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={generatedLink}
+                    className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 outline-none font-mono truncate"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${linkCopied ? 'bg-emerald-600 text-white' : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                  >
+                    {linkCopied ? <><Check className="w-3.5 h-3.5" /> Copied!</> : <><Copy className="w-3.5 h-3.5" /> Copy</>}
+                  </button>
+                </div>
+                <p className="text-[11px] text-emerald-600 mt-2">Send this link to the invitee. When they click it, they'll be guided through account setup.</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Pending Invitations */}
+        {pendingInvitations.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <h4 className="text-sm font-bold text-slate-700">Pending Invitations</h4>
+            </div>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
+                  <th className="px-6 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pendingInvitations.map(inv => (
+                  <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-3 text-sm text-slate-700 font-medium">{inv.email}</td>
+                    <td className="px-6 py-3">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border capitalize ${
+                        inv.role === 'admin'
+                          ? 'bg-purple-50 text-purple-700 border-purple-100'
+                          : inv.role === 'foreman'
+                          ? 'bg-blue-50 text-blue-700 border-blue-100'
+                          : 'bg-amber-50 text-amber-700 border-amber-100'
+                      }`}>
+                        {inv.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-xs text-slate-400">{new Date(inv.created_at).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 text-right">
+                      <button
+                        onClick={() => handleRevokeInvitation(inv.id)}
+                        className="text-xs font-bold text-red-500 hover:underline flex items-center gap-1 ml-auto"
+                      >
+                        <X className="w-3 h-3" /> Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Modals for Adding */}
       <AnimatePresence>
         {isAddingEmployee && (
@@ -2528,16 +2876,23 @@ const Settings = ({ user }: { user: User }) => {
   );
 };
 
-const UserManagement = () => {
+const UserManagement = ({ currentUser }: { currentUser: User }) => {
   const [users, setUsers] = useState<User[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchUsers = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('users').select('*');
-    if (!error && data) {
-      setUsers(data as User[]);
-    }
+    const [usersRes, invitesRes] = await Promise.all([
+      supabase.from('users').select('*'),
+      supabase
+        .from('invitations')
+        .select('*')
+        .is('accepted_at', null)
+        .order('created_at', { ascending: false }),
+    ]);
+    if (!usersRes.error && usersRes.data) setUsers(usersRes.data as User[]);
+    if (!invitesRes.error && invitesRes.data) setInvitations(invitesRes.data as Invitation[]);
     setLoading(false);
   };
 
@@ -2560,60 +2915,101 @@ const UserManagement = () => {
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-12">
-        <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
-        <p className="text-slate-500 mt-1">Manage company accounts and permissions.</p>
+      <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
+          <p className="text-slate-500 mt-1">View team members and promote roles. To invite new members, use <strong>Settings → Invite Team Members</strong>.</p>
+        </div>
       </div>
 
       {loading ? (
         <div className="text-center py-12 text-slate-400">Loading users...</div>
       ) : (
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
-                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
-                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
-                <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {users.map(u => (
-                <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
-                        {u.name.charAt(0)}
-                      </div>
-                      <span className="font-bold text-slate-900">{u.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-sm text-slate-500">{u.email}</td>
-                  <td className="px-6 py-4">
-                    <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
-                      u.role === 'admin' 
-                        ? 'bg-purple-50 text-purple-700 border-purple-100' 
-                        : 'bg-blue-50 text-blue-700 border-blue-100'
-                    }`}>
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    {u.role === 'foreman' && (
-                      <button 
-                        onClick={() => handlePromote(u.id)}
-                        className="text-xs font-bold text-brand hover:underline flex items-center gap-1 ml-auto"
-                      >
-                        <Plus className="w-3 h-3" /> Promote to Admin
-                      </button>
-                    )}
-                  </td>
+        <>
+          {/* Current Users */}
+          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden mb-8">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+              <h3 className="text-sm font-bold text-slate-700">Team Members</h3>
+            </div>
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Name</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                  <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {users.map(u => (
+                  <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600">
+                          {u.name.charAt(0)}
+                        </div>
+                        <span className="font-bold text-slate-900">{u.name}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-sm text-slate-500">{u.email}</td>
+                    <td className="px-6 py-4">
+                      <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                        u.role === 'admin' 
+                          ? 'bg-purple-50 text-purple-700 border-purple-100' 
+                          : 'bg-blue-50 text-blue-700 border-blue-100'
+                      }`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {u.role !== 'admin' && u.id !== currentUser.id && (
+                        <button 
+                          onClick={() => handlePromote(u.id)}
+                          className="text-xs font-bold text-brand hover:underline flex items-center gap-1 ml-auto"
+                        >
+                          <Plus className="w-3 h-3" /> Promote to Admin
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pending Invitations */}
+          {invitations.length > 0 && (
+            <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+                <h3 className="text-sm font-bold text-slate-700">Pending Invitations</h3>
+              </div>
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200">
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Email</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Role</th>
+                    <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sent</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {invitations.map(inv => (
+                    <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-6 py-4 text-sm text-slate-700 font-medium">{inv.email}</td>
+                      <td className="px-6 py-4">
+                        <span className="px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border bg-amber-50 text-amber-700 border-amber-100 capitalize">
+                          {inv.role}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-xs text-slate-400">
+                        {new Date(inv.created_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -2621,38 +3017,46 @@ const UserManagement = () => {
 
 // --- Main App ---
 
-// How long (ms) to wait before retrying a profile fetch when the row hasn't
-// been written yet (covers the sign-up race condition where onAuthStateChange
-// fires before register_with_company finishes inserting the profile).
-const PROFILE_FETCH_RETRY_DELAY_MS = 800;
-// Maximum number of times fetchProfile will query the DB before giving up and
-// showing the company-registration modal.
-const MAX_PROFILE_FETCH_ATTEMPTS = 2;
-
 export default function App() {
   const [activeTab, setActiveTab] = useState('jobs');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null); // authenticated email (may have no profile yet)
   const [company, setCompany] = useState<Company | null>(null);
-  const [showCompanyReg, setShowCompanyReg] = useState(false);
   const [authReady, setAuthReady] = useState(false);
+  // Invite-link flow: set when a valid ?invite=<token> is detected; cleared on auth
+  const [pendingInvitation, setPendingInvitation] = useState<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'> | null>(null);
 
-  // Safety-net: if the user gains a company_id (e.g. because register_with_company
-  // completed after the modal was shown), automatically dismiss the modal and
-  // load the company details.
+  // On mount: check for ?invite=<token> in the URL.
+  // If found and the user is not yet authenticated, look up the invitation and
+  // show the InviteSignup page directly (no email step).
   useEffect(() => {
-    if (user?.company_id && showCompanyReg) {
-      setShowCompanyReg(false);
-      if (!company) {
-        supabase
-          .from('companies')
-          .select('id, name')
-          .eq('id', user.company_id)
-          .single()
-          .then(({ data }) => { if (data) setCompany(data as Company); });
+    const params = new URLSearchParams(window.location.search);
+    const inviteToken = params.get('invite');
+    if (!inviteToken) return;
+
+    // Remove the token from the URL so it isn't re-processed on refresh
+    const pathWithoutQuery = window.location.pathname;
+    window.history.replaceState({}, '', pathWithoutQuery);
+
+    const handleInviteToken = async () => {
+      // Skip if user is already authenticated
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData?.session) return;
+
+      const { data } = await supabase.rpc('get_invitation_by_token', {
+        p_token: inviteToken,
+      });
+
+      const rows = data as Array<Pick<Invitation, 'id' | 'email' | 'company_id' | 'role'>> | null;
+      const inv = rows?.[0];
+      if (inv?.email) {
+        setPendingInvitation(inv);
       }
-    }
-  }, [user?.company_id, showCompanyReg, company]);
+    };
+
+    handleInviteToken();
+  }, []);
 
   useEffect(() => {
     // onAuthStateChange fires INITIAL_SESSION on mount (equivalent to getSession),
@@ -2666,64 +3070,45 @@ export default function App() {
         }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
+        setUserEmail(null);
         setCompany(null);
-        setShowCompanyReg(false);
         setAuthReady(true);
       }
       // TOKEN_REFRESHED and other events are intentionally ignored to prevent
-      // the company-setup modal from re-appearing mid-session.
+      // the account-setup page from re-appearing mid-session.
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchProfile = async (email: string) => {
-    let data: User | null = null;
-    let error: unknown = null;
+    // Always record the authenticated email so AccountSetup can use it
+    setUserEmail(email);
+    // Clear pending invite once the user is authenticated
+    setPendingInvitation(null);
 
-    // Attempt the fetch; if no profile is found on the first try (e.g. because
-    // register_with_company is still running in the sign-up flow), wait briefly
-    // and retry once before falling back to the company-registration modal.
-    for (let attempt = 0; attempt < MAX_PROFILE_FETCH_ATTEMPTS; attempt++) {
-      const result = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', email)
-        .single();
-      data = result.data as User | null;
-      error = result.error;
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .maybeSingle();
 
-      if (!error && data?.company_id) break;          // success — profile + company found
-      if (attempt < MAX_PROFILE_FETCH_ATTEMPTS - 1) await new Promise(r => setTimeout(r, PROFILE_FETCH_RETRY_DELAY_MS));
-    }
-
-    if (!error && data) {
+    if (!error && data && (data as User).company_id) {
+      // Fully registered user — load their company and go to the main app
       const profile = data as User;
       setUser(profile);
 
-      // Fetch company info if the user belongs to one
-      if (profile.company_id) {
-        setShowCompanyReg(false);
-        const { data: companyData } = await supabase
-          .from('companies')
-          .select('id, name')
-          .eq('id', profile.company_id)
-          .single();
-        if (companyData) setCompany(companyData as Company);
-      } else {
-        // User has no company — show the registration modal
-        setShowCompanyReg(true);
-      }
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('id, name')
+        .eq('id', profile.company_id!)
+        .single();
+      if (companyData) setCompany(companyData as Company);
     } else {
-      // Fallback if profile not found after retrying
-      setUser({
-        id: 0,
-        name: email.split('@')[0],
-        email: email,
-        role: 'foreman',
-      });
-      setShowCompanyReg(true);
+      // No profile or profile without company — show AccountSetup
+      setUser(null);
     }
+
     setAuthReady(true);
   };
 
@@ -2731,30 +3116,27 @@ export default function App() {
     await supabase.auth.signOut();
   };
 
-  const handleCompanyRegistered = async (companyId: string, role: string) => {
-    setShowCompanyReg(false);
+  const handleAccountSetupComplete = async (companyId: string, role: string, emailOverride?: string) => {
+    const email = emailOverride ?? userEmail;
+    if (!email) return;
 
-    // Immediately apply the role/company from the RPC so the UI updates without
-    // waiting for the profile re-fetch below.
-    setUser(prev => prev ? { ...prev, company_id: companyId, role } : prev);
+    // Re-fetch the full profile now that accept_invitation has created it
+    const { data: profileData } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email)
+      .single();
 
-    // Re-fetch the full profile to replace any fallback state (e.g. id:0) with
-    // the real database row that register_with_company just created/updated.
-    // Only replace the user state when the profile already has company_id set —
-    // this guards against the race condition where the DB hasn't committed yet,
-    // which would otherwise trigger showCompanyReg = true again.
-    if (user?.email) {
-      const { data: profileData, error: profileError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', user.email)
-        .single();
-      if (profileError) {
-        console.warn('Could not re-fetch profile after company registration:', profileError.message);
-      } else if (profileData && (profileData as User).company_id) {
-        setUser(profileData as User);
-      }
+    if (profileData) {
+      setUser(profileData as User);
+      setUserEmail(email);
+    } else {
+      // Fallback: build minimal profile from what we know
+      setUser({ id: 0, name: email.split('@')[0], email, role: role as User['role'], company_id: companyId });
+      setUserEmail(email);
     }
+
+    setPendingInvitation(null);
 
     const { data: companyData } = await supabase
       .from('companies')
@@ -2762,7 +3144,18 @@ export default function App() {
       .eq('id', companyId)
       .single();
     if (companyData) setCompany(companyData as Company);
+    setAuthReady(true);
   };
+
+  // Invite-link flow: show the direct signup page before auth is resolved
+  if (pendingInvitation && !userEmail) {
+    return (
+      <InviteSignup
+        invitation={pendingInvitation}
+        onComplete={handleAccountSetupComplete}
+      />
+    );
+  }
 
   if (!authReady) {
     return (
@@ -2772,32 +3165,38 @@ export default function App() {
     );
   }
 
+  // Not authenticated → show Login page
+  if (!userEmail) {
+    return <Login />;
+  }
+
+  // Authenticated but no company profile yet → show Account Setup
   if (!user) {
-    return <Login onLogin={setUser} />;
+    return (
+      <AccountSetup
+        userEmail={userEmail}
+        onComplete={handleAccountSetupComplete}
+      />
+    );
   }
 
   return (
-    <>
-      {showCompanyReg && (
-        <CompanyRegistration user={user} onComplete={handleCompanyRegistered} />
+    <Layout
+      activeTab={activeTab}
+      setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }}
+      user={user}
+      companyName={company?.name || ''}
+      onLogout={handleLogout}
+    >
+      {activeTab === 'jobs' && (
+        selectedJobId ? (
+          <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
+        ) : (
+          <Dashboard onSelectJob={setSelectedJobId} user={user} />
+        )
       )}
-      <Layout
-        activeTab={activeTab}
-        setActiveTab={(t) => { setActiveTab(t); setSelectedJobId(null); }}
-        user={user}
-        companyName={company?.name || ''}
-        onLogout={handleLogout}
-      >
-        {activeTab === 'jobs' && (
-          selectedJobId ? (
-            <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
-          ) : (
-            <Dashboard onSelectJob={setSelectedJobId} user={user} />
-          )
-        )}
-        {activeTab === 'users' && user.role === 'admin' && <UserManagement />}
-        {activeTab === 'settings' && user.role === 'admin' && <Settings user={user} />}
-      </Layout>
-    </>
+      {activeTab === 'users' && user.role === 'admin' && <UserManagement currentUser={user} />}
+      {activeTab === 'settings' && user.role === 'admin' && <Settings user={user} />}
+    </Layout>
   );
 }
