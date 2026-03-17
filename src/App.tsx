@@ -337,11 +337,7 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
 };
 
 const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, user: User }) => {
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [isAdding, setIsAdding] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [foremen, setForemen] = useState<User[]>([]);
-  const [newJob, setNewJob] = useState<Partial<Job>>({
+  const getInitialJob = (): Partial<Job> => ({
     customer_name: '',
     job_name: '',
     job_number: '',
@@ -353,6 +349,12 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     foreman_id: null,
     company_id: user.company_id
   });
+
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [isAdding, setIsAdding] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [foremen, setForemen] = useState<User[]>([]);
+  const [newJob, setNewJob] = useState<Partial<Job>>(getInitialJob());
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -388,7 +390,12 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     setIsCreating(true);
     
     try {
-      const jobPayload = { ...newJob, company_id: user.company_id };
+      const jobPayload = {
+        ...newJob,
+        company_id: user.company_id,
+        end_date: newJob.end_date || null,
+        foreman_id: newJob.foreman_id || null,
+      };
       console.log('Creating job with payload:', jobPayload);
       const { data, error } = await supabase
         .from('jobs')
@@ -404,6 +411,9 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
 
       if (data) {
         console.log('Job created successfully:', data);
+        setJobs([data as Job, ...jobs]);
+        setIsAdding(false);
+        setNewJob(getInitialJob());
         onSelectJob(data.id);
       }
     } catch (err: any) {
@@ -581,7 +591,6 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                     <div className="md:col-span-2">
                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Assign Foreman</label>
                       <select 
-                        required
                         className="input-field"
                         value={newJob.foreman_id ?? ''}
                         onChange={e => setNewJob({...newJob, foreman_id: e.target.value || null})}
