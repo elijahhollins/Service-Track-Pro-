@@ -279,24 +279,24 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
             {activeTab === 'jobs' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
           </button>
           {user.role === 'admin' && (
-            <>
-              <button 
-                onClick={() => setActiveTab('users')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'users' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
-              >
-                <Users className="w-5 h-5" />
-                <span className="font-medium">Users</span>
-                {activeTab === 'users' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
-              </button>
-              <button 
-                onClick={() => setActiveTab('settings')}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'settings' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
-              >
-                <SettingsIcon className="w-5 h-5" />
-                <span className="font-medium">Settings</span>
-                {activeTab === 'settings' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
-              </button>
-            </>
+            <button 
+              onClick={() => setActiveTab('users')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'users' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+            >
+              <Users className="w-5 h-5" />
+              <span className="font-medium">Users</span>
+              {activeTab === 'users' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+            </button>
+          )}
+          {(user.role === 'admin' || user.role === 'foreman') && (
+            <button 
+              onClick={() => setActiveTab('settings')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'settings' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+            >
+              <SettingsIcon className="w-5 h-5" />
+              <span className="font-medium">Settings</span>
+              {activeTab === 'settings' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+            </button>
           )}
           {user.role === 'super_admin' && (
             <button 
@@ -1515,7 +1515,13 @@ const Settings = ({ user }: { user: User }) => {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
+  const [isAddingTemplate, setIsAddingTemplate] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const [templateEmployees, setTemplateEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>([]);
+  const [templateEquipment, setTemplateEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>([]);
+  const [templateMaterials, setTemplateMaterials] = useState<{ materialId?: number; name: string; quantity: number; unitPrice: number }[]>([]);
 
   const fetchAll = async () => {
     console.log('Fetching all settings data for company:', user.company_id);
@@ -1644,6 +1650,67 @@ const Settings = ({ user }: { user: User }) => {
     fetchAll();
   };
 
+  const handleSaveTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user.company_id) {
+      alert("Error: Your account is not associated with a company. Please contact support.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const templateData: WorkLogEntry = {
+        employees: templateEmployees,
+        equipment: templateEquipment,
+        materials: templateMaterials
+      };
+      const { error } = await supabase.from('templates').insert([{
+        company_id: user.company_id,
+        name: newTemplateName,
+        data: templateData
+      }]);
+      if (error) {
+        alert(`Failed to save template: ${error.message}`);
+        return;
+      }
+      setNewTemplateName('');
+      setTemplateEmployees([]);
+      setTemplateEquipment([]);
+      setTemplateMaterials([]);
+      setIsAddingTemplate(false);
+      fetchAll();
+    } catch (err: any) {
+      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this template?')) return;
+    const { error } = await supabase.from('templates').delete().eq('id', id).eq('company_id', user.company_id);
+    if (error) {
+      alert(`Failed to delete template: ${error.message}`);
+      return;
+    }
+    fetchAll();
+  };
+
+  const handleAddTemplateEmployee = (id: number) => {
+    const emp = employees.find(e => e.id === id);
+    if (!emp) return;
+    setTemplateEmployees([...templateEmployees, { employeeId: id, hours: 8, rate: emp.hourly_rate }]);
+  };
+
+  const handleAddTemplateEquipment = (id: number) => {
+    const eq = equipment.find(e => e.id === id);
+    if (!eq) return;
+    setTemplateEquipment([...templateEquipment, { equipmentId: id, hours: 8, rate: eq.hourly_rate }]);
+  };
+
+  const handleAddTemplateMaterial = (mat: Material) => {
+    setTemplateMaterials([...templateMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
+  };
+
   const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
   const filteredEquipment = equipment.filter(e => e.name.toLowerCase().includes(searchEquipment.toLowerCase()));
   const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchMaterials.toLowerCase()));
@@ -1653,7 +1720,11 @@ const Settings = ({ user }: { user: User }) => {
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">System Settings</h2>
-          <p className="text-slate-500 mt-1">Manage your master lists for employees, equipment, and materials.</p>
+          <p className="text-slate-500 mt-1">
+            {user.role === 'admin'
+              ? 'Manage your master lists for employees, equipment, materials, and daily log templates.'
+              : 'Manage daily log templates for your crew.'}
+          </p>
         </div>
         <div className="flex gap-3">
           <div className="px-4 py-2 bg-white border border-slate-200 rounded-xl flex items-center gap-3 shadow-sm">
@@ -1663,6 +1734,7 @@ const Settings = ({ user }: { user: User }) => {
         </div>
       </header>
 
+      {user.role === 'admin' && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
         {/* Employees */}
         <section className="space-y-6">
@@ -1836,6 +1908,68 @@ const Settings = ({ user }: { user: User }) => {
           </div>
         </section>
       </div>
+      )}
+
+      {/* Templates — visible to admin and foreman */}
+      <section className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+            <div className="w-10 h-10 bg-violet-50 rounded-xl flex items-center justify-center">
+              <FileText className="w-5 h-5 text-violet-500" />
+            </div>
+            Daily Log Templates
+          </h3>
+          <button onClick={() => setIsAddingTemplate(true)} className="p-2 bg-violet-500 text-white rounded-lg shadow-lg shadow-violet-500/20 hover:scale-105 transition-all">
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
+        <p className="text-sm text-slate-500">Templates let you quickly pre-fill crew, equipment, and materials when creating a daily log.</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {templates.map(t => (
+            <div key={t.id} className="card p-5 group hover:border-violet-500/30 transition-all space-y-3">
+              <div className="flex justify-between items-start">
+                <p className="font-bold text-slate-900">{t.name}</p>
+                <button
+                  onClick={() => handleDeleteTemplate(t.id!)}
+                  className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                  title="Delete Template"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="space-y-1 text-xs text-slate-500">
+                {t.data.employees.length > 0 && (
+                  <p className="flex items-center gap-1.5">
+                    <Users className="w-3 h-3 text-slate-400" />
+                    {t.data.employees.length} employee{t.data.employees.length !== 1 ? 's' : ''}
+                  </p>
+                )}
+                {t.data.equipment.length > 0 && (
+                  <p className="flex items-center gap-1.5">
+                    <Truck className="w-3 h-3 text-slate-400" />
+                    {t.data.equipment.length} equipment item{t.data.equipment.length !== 1 ? 's' : ''}
+                  </p>
+                )}
+                {t.data.materials.length > 0 && (
+                  <p className="flex items-center gap-1.5">
+                    <Package className="w-3 h-3 text-slate-400" />
+                    {t.data.materials.length} material{t.data.materials.length !== 1 ? 's' : ''}
+                  </p>
+                )}
+                {t.data.employees.length === 0 && t.data.equipment.length === 0 && t.data.materials.length === 0 && (
+                  <p className="italic text-slate-400">Empty template</p>
+                )}
+              </div>
+            </div>
+          ))}
+          {templates.length === 0 && (
+            <div className="md:col-span-2 lg:col-span-3 py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+              <p className="text-slate-400 text-sm">No templates yet. Create one to speed up daily log entry.</p>
+            </div>
+          )}
+        </div>
+      </section>
 
       {/* Modals for Adding */}
       <AnimatePresence>
@@ -1922,6 +2056,176 @@ const Settings = ({ user }: { user: User }) => {
                   <button type="button" disabled={isSaving} onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
                   <button type="submit" disabled={isSaving} className="btn-primary flex-1">
                     {isSaving ? 'Saving...' : 'Save Material'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {isAddingTemplate && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-2xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
+                <div>
+                  <h3 className="text-xl font-bold font-display">Create Daily Log Template</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">Save a crew, equipment, and materials combination for quick reuse.</p>
+                </div>
+                <button onClick={() => setIsAddingTemplate(false)}><X className="w-6 h-6 text-slate-400" /></button>
+              </div>
+              <form onSubmit={handleSaveTemplate} className="p-6 space-y-6 overflow-y-auto min-h-0">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Template Name</label>
+                  <input
+                    required
+                    className="input-field"
+                    placeholder="e.g. Standard 4-Man Crew"
+                    value={newTemplateName}
+                    onChange={e => setNewTemplateName(e.target.value)}
+                  />
+                </div>
+
+                {/* Template Employees */}
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Users className="w-3 h-3" /> Employees
+                    </label>
+                    <select
+                      className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded border border-slate-200 outline-none"
+                      onChange={e => { if (e.target.value) { handleAddTemplateEmployee(Number(e.target.value)); e.target.value = ''; } }}
+                      value=""
+                    >
+                      <option value="" disabled>+ Add Employee</option>
+                      {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    {templateEmployees.map((se, idx) => (
+                      <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex-1">
+                          <p className="font-bold text-sm">{employees.find(e => e.id === se.employeeId)?.name}</p>
+                          <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">{employees.find(e => e.id === se.employeeId)?.role}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-14 bg-white border border-slate-200 rounded px-2 py-1 text-sm text-center font-mono"
+                            value={se.hours}
+                            onChange={e => {
+                              const updated = [...templateEmployees];
+                              updated[idx] = { ...updated[idx], hours: Number(e.target.value) };
+                              setTemplateEmployees(updated);
+                            }}
+                          />
+                          <span className="text-xs text-slate-400">hrs</span>
+                        </div>
+                        <button type="button" onClick={() => setTemplateEmployees(templateEmployees.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {templateEmployees.length === 0 && <p className="text-xs text-slate-400 italic">No employees added.</p>}
+                  </div>
+                </div>
+
+                {/* Template Equipment */}
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Truck className="w-3 h-3" /> Equipment
+                    </label>
+                    <select
+                      className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded border border-slate-200 outline-none"
+                      onChange={e => { if (e.target.value) { handleAddTemplateEquipment(Number(e.target.value)); e.target.value = ''; } }}
+                      value=""
+                    >
+                      <option value="" disabled>+ Add Equipment</option>
+                      {equipment.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    {templateEquipment.map((se, idx) => (
+                      <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex-1">
+                          <p className="font-bold text-sm">{equipment.find(e => e.id === se.equipmentId)?.name}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            min="0"
+                            className="w-14 bg-white border border-slate-200 rounded px-2 py-1 text-sm text-center font-mono"
+                            value={se.hours}
+                            onChange={e => {
+                              const updated = [...templateEquipment];
+                              updated[idx] = { ...updated[idx], hours: Number(e.target.value) };
+                              setTemplateEquipment(updated);
+                            }}
+                          />
+                          <span className="text-xs text-slate-400">hrs</span>
+                        </div>
+                        <button type="button" onClick={() => setTemplateEquipment(templateEquipment.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {templateEquipment.length === 0 && <p className="text-xs text-slate-400 italic">No equipment added.</p>}
+                  </div>
+                </div>
+
+                {/* Template Materials */}
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Package className="w-3 h-3" /> Materials
+                    </label>
+                    <select
+                      className="text-xs font-bold text-slate-900 bg-slate-100 px-2 py-1 rounded border border-slate-200 outline-none"
+                      onChange={e => {
+                        const mat = materials.find(m => String(m.id) === e.target.value);
+                        if (mat) { handleAddTemplateMaterial(mat); e.target.value = ''; }
+                      }}
+                      value=""
+                    >
+                      <option value="" disabled>+ Add Material</option>
+                      {materials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    {templateMaterials.map((sm, idx) => (
+                      <div key={idx} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <div className="flex-1">
+                          <p className="font-bold text-sm">{sm.name}</p>
+                          <p className="text-[10px] text-slate-400">${sm.unitPrice} / unit</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number"
+                            className="w-14 bg-white border border-slate-200 rounded px-2 py-1 text-sm text-center font-mono"
+                            value={sm.quantity}
+                            min={1}
+                            onChange={e => {
+                              const updated = [...templateMaterials];
+                              updated[idx] = { ...updated[idx], quantity: Number(e.target.value) };
+                              setTemplateMaterials(updated);
+                            }}
+                          />
+                          <span className="text-xs text-slate-400">qty</span>
+                        </div>
+                        <button type="button" onClick={() => setTemplateMaterials(templateMaterials.filter((_, i) => i !== idx))} className="text-slate-300 hover:text-red-500 transition-colors">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {templateMaterials.length === 0 && <p className="text-xs text-slate-400 italic">No materials added.</p>}
+                  </div>
+                </div>
+
+                <div className="pt-2 flex gap-3">
+                  <button type="button" disabled={isSaving} onClick={() => setIsAddingTemplate(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
+                    {isSaving ? 'Saving...' : 'Save Template'}
                   </button>
                 </div>
               </form>
@@ -2449,7 +2753,7 @@ export default function App() {
         )
       )}
       {activeTab === 'users' && user.role === 'admin' && <UserManagement user={user} />}
-      {activeTab === 'settings' && user.role === 'admin' && <Settings user={user} />}
+      {activeTab === 'settings' && (user.role === 'admin' || user.role === 'foreman') && <Settings user={user} />}
       {activeTab === 'super-admin' && user.role === 'super_admin' && <SuperAdminDashboard />}
     </Layout>
   );
