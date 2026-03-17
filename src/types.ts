@@ -56,7 +56,7 @@ export interface Job {
   job_number: string;
   address: string;
   start_date: string;
-  end_date: string;
+  end_date?: string | null;
   notes: string;
   status: 'active' | 'completed';
   foreman_id?: string;
