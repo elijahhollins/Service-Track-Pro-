@@ -125,10 +125,21 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             .eq('id', invitation.id);
         }
 
-        setError('Account created! You can now sign in.');
-        setIsSignUp(false);
-        setInvitation(null);
+        // 5. Fetch the newly created profile and log the user in immediately
+        const { data: newProfile, error: newProfileError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
         window.history.replaceState({}, document.title, window.location.pathname);
+        if (!newProfileError && newProfile) {
+          onLogin(newProfile as User);
+        } else {
+          setError('Account created! You can now sign in.');
+          setIsSignUp(false);
+          setInvitation(null);
+        }
       } else {
         // Sign in
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -2266,15 +2277,9 @@ export default function App() {
     if (!error && data) {
       setUser(data as User);
     } else {
-      console.warn('Profile not found in database, using fallback:', error);
-      // Fallback if profile not found
-      setUser({
-        id: '00000000-0000-0000-0000-000000000000',
-        name: email.split('@')[0],
-        email: email,
-        role: 'admin',
-        company_id: null
-      });
+      console.warn('Profile not found in database:', error);
+      // No profile found — keep the user on the login page instead of
+      // logging them in with a broken account that has no company_id.
     }
     setAuthReady(true);
   };
