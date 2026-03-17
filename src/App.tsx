@@ -1457,6 +1457,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
 };
 
 const Settings = ({ user }: { user: User }) => {
+  console.log('Settings component rendering for user:', user.email, 'role:', user.role, 'company_id:', user.company_id);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -1469,8 +1470,10 @@ const Settings = ({ user }: { user: User }) => {
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fetchAll = async () => {
+    console.log('Fetching all settings data for company:', user.company_id);
     const [empRes, eqRes, matRes, tempRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', user.company_id),
       supabase.from('equipment').select('*').eq('company_id', user.company_id),
@@ -1478,6 +1481,11 @@ const Settings = ({ user }: { user: User }) => {
       supabase.from('templates').select('*').eq('company_id', user.company_id)
     ]);
     
+    if (empRes.error) console.error('Error fetching employees:', empRes.error);
+    if (eqRes.error) console.error('Error fetching equipment:', eqRes.error);
+    if (matRes.error) console.error('Error fetching materials:', matRes.error);
+    if (tempRes.error) console.error('Error fetching templates:', tempRes.error);
+
     if (empRes.data) setEmployees(empRes.data);
     if (eqRes.data) setEquipment(eqRes.data);
     if (matRes.data) setMaterials(matRes.data);
@@ -1494,26 +1502,83 @@ const Settings = ({ user }: { user: User }) => {
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('employees').insert([newEmployee]);
-    setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
-    setIsAddingEmployee(false);
-    fetchAll();
+    alert('Attempting to save employee...');
+    console.log('handleAddEmployee called', newEmployee);
+    if (!user.company_id) {
+      alert("Error: Your account is not associated with a company. Please contact support.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('employees').insert([{ ...newEmployee, company_id: user.company_id }]);
+      if (error) {
+        console.error('Error adding employee:', error);
+        alert(`Failed to add employee: ${error.message}`);
+        return;
+      }
+      setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
+      setIsAddingEmployee(false);
+      fetchAll();
+    } catch (err: any) {
+      console.error('Unexpected error adding employee:', err);
+      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAddEquipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('equipment').insert([newEquipment]);
-    setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
-    setIsAddingEquipment(false);
-    fetchAll();
+    alert('Attempting to save equipment...');
+    console.log('handleAddEquipment called', newEquipment);
+    if (!user.company_id) {
+      alert("Error: Your account is not associated with a company. Please contact support.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('equipment').insert([{ ...newEquipment, company_id: user.company_id }]);
+      if (error) {
+        console.error('Error adding equipment:', error);
+        alert(`Failed to add equipment: ${error.message}`);
+        return;
+      }
+      setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
+      setIsAddingEquipment(false);
+      fetchAll();
+    } catch (err: any) {
+      console.error('Unexpected error adding equipment:', err);
+      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    await supabase.from('materials').insert([newMaterial]);
-    setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
-    setIsAddingMaterial(false);
-    fetchAll();
+    alert('Attempting to save material...');
+    console.log('handleAddMaterial called', newMaterial);
+    if (!user.company_id) {
+      alert("Error: Your account is not associated with a company. Please contact support.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const { error } = await supabase.from('materials').insert([{ ...newMaterial, company_id: user.company_id }]);
+      if (error) {
+        console.error('Error adding material:', error);
+        alert(`Failed to add material: ${error.message}`);
+        return;
+      }
+      setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
+      setIsAddingMaterial(false);
+      fetchAll();
+    } catch (err: any) {
+      console.error('Unexpected error adding material:', err);
+      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDeleteEmployee = async (id: number) => {
@@ -1736,7 +1801,7 @@ const Settings = ({ user }: { user: User }) => {
                 <h3 className="text-xl font-bold font-display">Add Employee</h3>
                 <button onClick={() => setIsAddingEmployee(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddEmployee} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={(e) => { console.log('Employee form onSubmit'); handleAddEmployee(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
                   <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
@@ -1750,8 +1815,10 @@ const Settings = ({ user }: { user: User }) => {
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
                 </div>
                 <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsAddingEmployee(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" className="btn-primary flex-1">Save Employee</button>
+                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEmployee(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
+                    {isSaving ? 'Saving...' : 'Save Employee'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -1765,7 +1832,7 @@ const Settings = ({ user }: { user: User }) => {
                 <h3 className="text-xl font-bold font-display">Add Equipment</h3>
                 <button onClick={() => setIsAddingEquipment(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddEquipment} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={(e) => { console.log('Equipment form onSubmit'); handleAddEquipment(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
                   <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
@@ -1775,8 +1842,15 @@ const Settings = ({ user }: { user: User }) => {
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
                 </div>
                 <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsAddingEquipment(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" className="btn-primary flex-1">Save Equipment</button>
+                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEquipment(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button 
+                    type="submit" 
+                    disabled={isSaving} 
+                    onClick={() => console.log('Save Equipment button clicked')}
+                    className="btn-primary flex-1"
+                  >
+                    {isSaving ? 'Saving...' : 'Save Equipment'}
+                  </button>
                 </div>
               </form>
             </motion.div>
@@ -1790,7 +1864,7 @@ const Settings = ({ user }: { user: User }) => {
                 <h3 className="text-xl font-bold font-display">Add Material</h3>
                 <button onClick={() => setIsAddingMaterial(false)}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={handleAddMaterial} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={(e) => { console.log('Material form onSubmit'); handleAddMaterial(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
                   <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
@@ -1800,8 +1874,10 @@ const Settings = ({ user }: { user: User }) => {
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
                 </div>
                 <div className="pt-4 flex gap-3">
-                  <button type="button" onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" className="btn-primary flex-1">Save Material</button>
+                  <button type="button" disabled={isSaving} onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
+                    {isSaving ? 'Saving...' : 'Save Material'}
+                  </button>
                 </div>
               </form>
             </motion.div>
