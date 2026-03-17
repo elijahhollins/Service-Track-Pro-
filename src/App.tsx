@@ -1457,7 +1457,6 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
 };
 
 const Settings = ({ user }: { user: User }) => {
-  console.log('Settings component rendering for user:', user.email, 'role:', user.role, 'company_id:', user.company_id);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -1471,9 +1470,9 @@ const Settings = ({ user }: { user: User }) => {
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const fetchAll = async () => {
-    console.log('Fetching all settings data for company:', user.company_id);
     const [empRes, eqRes, matRes, tempRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', user.company_id),
       supabase.from('equipment').select('*').eq('company_id', user.company_id),
@@ -1502,26 +1501,23 @@ const Settings = ({ user }: { user: User }) => {
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save employee...');
-    console.log('handleAddEmployee called', newEmployee);
+    setSaveError('');
     if (!user.company_id) {
-      alert("Error: Your account is not associated with a company. Please contact support.");
+      setSaveError('Your account is not associated with a company. Please contact support.');
       return;
     }
     setIsSaving(true);
     try {
       const { error } = await supabase.from('employees').insert([{ ...newEmployee, company_id: user.company_id }]);
       if (error) {
-        console.error('Error adding employee:', error);
-        alert(`Failed to add employee: ${error.message}`);
+        setSaveError(`Failed to add employee: ${error.message}`);
         return;
       }
       setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
       setIsAddingEmployee(false);
       fetchAll();
     } catch (err: any) {
-      console.error('Unexpected error adding employee:', err);
-      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+      setSaveError(err.message || 'An unexpected error occurred.');
     } finally {
       setIsSaving(false);
     }
@@ -1529,26 +1525,23 @@ const Settings = ({ user }: { user: User }) => {
 
   const handleAddEquipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save equipment...');
-    console.log('handleAddEquipment called', newEquipment);
+    setSaveError('');
     if (!user.company_id) {
-      alert("Error: Your account is not associated with a company. Please contact support.");
+      setSaveError('Your account is not associated with a company. Please contact support.');
       return;
     }
     setIsSaving(true);
     try {
       const { error } = await supabase.from('equipment').insert([{ ...newEquipment, company_id: user.company_id }]);
       if (error) {
-        console.error('Error adding equipment:', error);
-        alert(`Failed to add equipment: ${error.message}`);
+        setSaveError(`Failed to add equipment: ${error.message}`);
         return;
       }
       setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
       setIsAddingEquipment(false);
       fetchAll();
     } catch (err: any) {
-      console.error('Unexpected error adding equipment:', err);
-      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+      setSaveError(err.message || 'An unexpected error occurred.');
     } finally {
       setIsSaving(false);
     }
@@ -1556,26 +1549,23 @@ const Settings = ({ user }: { user: User }) => {
 
   const handleAddMaterial = async (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save material...');
-    console.log('handleAddMaterial called', newMaterial);
+    setSaveError('');
     if (!user.company_id) {
-      alert("Error: Your account is not associated with a company. Please contact support.");
+      setSaveError('Your account is not associated with a company. Please contact support.');
       return;
     }
     setIsSaving(true);
     try {
       const { error } = await supabase.from('materials').insert([{ ...newMaterial, company_id: user.company_id }]);
       if (error) {
-        console.error('Error adding material:', error);
-        alert(`Failed to add material: ${error.message}`);
+        setSaveError(`Failed to add material: ${error.message}`);
         return;
       }
       setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
       setIsAddingMaterial(false);
       fetchAll();
     } catch (err: any) {
-      console.error('Unexpected error adding material:', err);
-      alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
+      setSaveError(err.message || 'An unexpected error occurred.');
     } finally {
       setIsSaving(false);
     }
@@ -1628,7 +1618,7 @@ const Settings = ({ user }: { user: User }) => {
               </div>
               Employees
             </h3>
-            <button onClick={() => setIsAddingEmployee(true)} className="p-2 bg-brand text-white rounded-lg shadow-lg shadow-brand/20 hover:scale-105 transition-all">
+            <button onClick={() => { setSaveError(''); setIsAddingEmployee(true); }} className="p-2 bg-brand text-white rounded-lg shadow-lg shadow-brand/20 hover:scale-105 transition-all">
               <Plus className="w-5 h-5" />
             </button>
           </div>
@@ -1688,7 +1678,7 @@ const Settings = ({ user }: { user: User }) => {
               </div>
               Equipment
             </h3>
-            <button onClick={() => setIsAddingEquipment(true)} className="p-2 bg-orange-500 text-white rounded-lg shadow-lg shadow-orange-500/20 hover:scale-105 transition-all">
+            <button onClick={() => { setSaveError(''); setIsAddingEquipment(true); }} className="p-2 bg-orange-500 text-white rounded-lg shadow-lg shadow-orange-500/20 hover:scale-105 transition-all">
               <Plus className="w-5 h-5" />
             </button>
           </div>
@@ -1745,7 +1735,7 @@ const Settings = ({ user }: { user: User }) => {
               </div>
               Materials Price List
             </h3>
-            <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all">
+            <button onClick={() => { setSaveError(''); setIsAddingMaterial(true); }} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all">
               <Plus className="w-5 h-5" />
             </button>
           </div>
@@ -1799,9 +1789,9 @@ const Settings = ({ user }: { user: User }) => {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Employee</h3>
-                <button onClick={() => setIsAddingEmployee(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <button onClick={() => { setIsAddingEmployee(false); setSaveError(''); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Employee form onSubmit'); handleAddEmployee(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={handleAddEmployee} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
                   <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
@@ -1814,8 +1804,9 @@ const Settings = ({ user }: { user: User }) => {
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
                 </div>
+                {saveError && <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveError}</p>}
                 <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEmployee(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="button" disabled={isSaving} onClick={() => { setIsAddingEmployee(false); setSaveError(''); }} className="btn-secondary flex-1">Cancel</button>
                   <button type="submit" disabled={isSaving} className="btn-primary flex-1">
                     {isSaving ? 'Saving...' : 'Save Employee'}
                   </button>
@@ -1830,9 +1821,9 @@ const Settings = ({ user }: { user: User }) => {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Equipment</h3>
-                <button onClick={() => setIsAddingEquipment(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <button onClick={() => { setIsAddingEquipment(false); setSaveError(''); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Equipment form onSubmit'); handleAddEquipment(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={handleAddEquipment} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
                   <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
@@ -1841,14 +1832,10 @@ const Settings = ({ user }: { user: User }) => {
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
                 </div>
+                {saveError && <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveError}</p>}
                 <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEquipment(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button 
-                    type="submit" 
-                    disabled={isSaving} 
-                    onClick={() => console.log('Save Equipment button clicked')}
-                    className="btn-primary flex-1"
-                  >
+                  <button type="button" disabled={isSaving} onClick={() => { setIsAddingEquipment(false); setSaveError(''); }} className="btn-secondary flex-1">Cancel</button>
+                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
                     {isSaving ? 'Saving...' : 'Save Equipment'}
                   </button>
                 </div>
@@ -1862,9 +1849,9 @@ const Settings = ({ user }: { user: User }) => {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <h3 className="text-xl font-bold font-display">Add Material</h3>
-                <button onClick={() => setIsAddingMaterial(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <button onClick={() => { setIsAddingMaterial(false); setSaveError(''); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Material form onSubmit'); handleAddMaterial(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
+              <form onSubmit={handleAddMaterial} className="p-6 space-y-4 overflow-y-auto min-h-0">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
                   <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
@@ -1873,8 +1860,9 @@ const Settings = ({ user }: { user: User }) => {
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unit Price ($)</label>
                   <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
                 </div>
+                {saveError && <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{saveError}</p>}
                 <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
+                  <button type="button" disabled={isSaving} onClick={() => { setIsAddingMaterial(false); setSaveError(''); }} className="btn-secondary flex-1">Cancel</button>
                   <button type="submit" disabled={isSaving} className="btn-primary flex-1">
                     {isSaving ? 'Saving...' : 'Save Material'}
                   </button>
