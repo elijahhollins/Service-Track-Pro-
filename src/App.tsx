@@ -2225,6 +2225,86 @@ const SuperAdminDashboard = () => {
   );
 };
 
+const CompanySetup = ({ user, onComplete }: { user: User, onComplete: (companyId: number) => void }) => {
+  const [companyName, setCompanyName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      console.log('Starting company setup for user:', user.id);
+      // 1. Create company
+      const { data: companyData, error: companyError } = await supabase
+        .from('companies')
+        .insert([{ name: companyName }])
+        .select()
+        .single();
+
+      if (companyError) {
+        console.error('Company creation error:', companyError);
+        throw companyError;
+      }
+      console.log('Company created successfully:', companyData.id);
+
+      // 2. Update user profile
+      console.log('Updating user profile with company_id:', companyData.id);
+      const { error: userError } = await supabase
+        .from('users')
+        .upsert({ 
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          company_id: companyData.id 
+        });
+
+      if (userError) {
+        console.error('User profile update error:', userError);
+        throw userError;
+      }
+      console.log('User profile updated successfully');
+
+      onComplete(companyData.id);
+    } catch (err: any) {
+      console.error('Full error object:', err);
+      setError(err.message || 'Failed to create company');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+      <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl">
+        <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">Setup Your Company</h2>
+        <p className="text-slate-500 mb-6">You need to create a company profile before you can start using Service Track Pro.</p>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {error && <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">{error}</div>}
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+            <input 
+              type="text" 
+              required 
+              className="input-field" 
+              placeholder="e.g. Acme Electrical Services"
+              value={companyName}
+              onChange={e => setCompanyName(e.target.value)}
+            />
+          </div>
+          <button type="submit" disabled={loading} className="btn-primary w-full py-3 text-lg mt-4 disabled:opacity-50">
+            {loading ? 'Creating...' : 'Create Company & Continue'}
+          </button>
+        </form>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -2237,7 +2317,7 @@ export default function App() {
     // Check initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        fetchProfile(session.user.email!);
+        fetchProfile(session.user.id, session.user.email!);
       } else {
         setAuthReady(true);
       }
@@ -2246,7 +2326,7 @@ export default function App() {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
-        fetchProfile(session.user.email!);
+        fetchProfile(session.user.id, session.user.email!);
       } else {
         setUser(null);
         setAuthReady(true);
@@ -2256,11 +2336,11 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  const fetchProfile = async (email: string) => {
+  const fetchProfile = async (id: string, email: string) => {
     const { data, error } = await supabase
       .from('users')
       .select('*')
-      .eq('email', email)
+      .eq('id', id)
       .single();
 
     if (!error && data) {
@@ -2269,7 +2349,7 @@ export default function App() {
       console.warn('Profile not found in database, using fallback:', error);
       // Fallback if profile not found
       setUser({
-        id: '00000000-0000-0000-0000-000000000000',
+        id: id,
         name: email.split('@')[0],
         email: email,
         role: 'admin',
@@ -2293,6 +2373,25 @@ export default function App() {
 
   if (!user) {
     return <Login onLogin={setUser} />;
+  }
+
+  if (user.company_id === null && user.role === 'admin') {
+    return <CompanySetup user={user} onComplete={(companyId) => setUser({ ...user, company_id: companyId })} />;
+  }
+
+  if (user.company_id === null) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 text-center">
+        <div className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl">
+          <div className="w-16 h-16 bg-amber-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
+            <Shield className="w-8 h-8 text-amber-600" />
+          </div>
+          <h2 className="text-2xl font-bold font-display text-slate-900 mb-2">No Company Assigned</h2>
+          <p className="text-slate-500 mb-8">Your account is not yet associated with a company. Please ask your administrator to invite you or assign you to a company.</p>
+          <button onClick={handleLogout} className="btn-secondary w-full py-3">Sign Out</button>
+        </div>
+      </div>
+    );
   }
 
   return (
