@@ -100,6 +100,7 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
         }
 
         // 3. Create profile in public.users
+        console.log('Attempting to create profile for:', userId, 'with role:', invitation?.role || 'admin', 'and companyId:', companyId);
         const { error: profileError } = await supabase
           .from('users')
           .insert([{ 
@@ -108,10 +109,13 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             email, 
             password, 
             role: invitation?.role || 'admin',
-            company_id: companyId
+            company_id: companyId || null
           }]);
 
-        if (profileError) throw profileError;
+        if (profileError) {
+          console.error('Profile creation error:', profileError);
+          throw new Error(`Profile creation failed: ${profileError.message}`);
+        }
         
         // 4. Mark invitation as used
         if (invitation) {
@@ -1812,6 +1816,7 @@ const UserManagement = ({ user }: { user: User }) => {
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [inviteLink, setInviteLink] = useState('');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'foreman'>('foreman');
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -1832,7 +1837,7 @@ const UserManagement = ({ user }: { user: User }) => {
       .from('invitations')
       .insert([{
         company_id: user.company_id,
-        role: 'foreman',
+        role: inviteRole,
         token,
         expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
       }])
@@ -1885,13 +1890,23 @@ const UserManagement = ({ user }: { user: User }) => {
           <h2 className="text-4xl font-bold text-slate-900 tracking-tight font-display">User Management</h2>
           <p className="text-slate-500 mt-1">Manage company accounts and permissions.</p>
         </div>
-        <button 
-          onClick={generateInvite}
-          className="btn-primary flex items-center gap-2"
-        >
-          <LinkIcon className="w-4 h-4" />
-          Invite Foreman
-        </button>
+        <div className="flex items-center gap-3">
+          <select 
+            value={inviteRole}
+            onChange={(e) => setInviteRole(e.target.value as 'admin' | 'foreman')}
+            className="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm font-medium text-slate-600 focus:outline-none focus:ring-2 focus:ring-brand/20"
+          >
+            <option value="foreman">Foreman</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button 
+            onClick={generateInvite}
+            className="btn-primary flex items-center gap-2"
+          >
+            <LinkIcon className="w-4 h-4" />
+            Generate Invite
+          </button>
+        </div>
       </div>
 
       {inviteLink && (
@@ -2175,12 +2190,14 @@ export default function App() {
     if (!error && data) {
       setUser(data as User);
     } else {
+      console.warn('Profile not found in database, using fallback:', error);
       // Fallback if profile not found
       setUser({
-        id: 0,
+        id: '00000000-0000-0000-0000-000000000000',
         name: email.split('@')[0],
         email: email,
-        role: 'foreman'
+        role: 'admin',
+        company_id: null
       });
     }
     setAuthReady(true);
