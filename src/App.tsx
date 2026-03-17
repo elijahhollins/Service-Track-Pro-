@@ -346,8 +346,11 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     job_name: '',
     job_number: '',
     address: '',
+    start_date: new Date().toISOString().split('T')[0],
+    end_date: '',
+    notes: '',
     status: 'active',
-    foreman_id: undefined,
+    foreman_id: null,
     company_id: user.company_id
   });
 
@@ -378,16 +381,36 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
     }
   }, [user]);
 
+  const [isCreating, setIsCreating] = useState(false);
+
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { data, error } = await supabase
-      .from('jobs')
-      .insert([newJob])
-      .select()
-      .single();
-      
-    if (!error && data) {
-      onSelectJob(data.id);
+    setIsCreating(true);
+    
+    try {
+      const jobPayload = { ...newJob, company_id: user.company_id };
+      console.log('Creating job with payload:', jobPayload);
+      const { data, error } = await supabase
+        .from('jobs')
+        .insert([jobPayload])
+        .select()
+        .single();
+        
+      if (error) {
+        console.error('Error creating job:', error);
+        alert(`Failed to create job: ${error.message}`);
+        return;
+      }
+
+      if (data) {
+        console.log('Job created successfully:', data);
+        onSelectJob(data.id);
+      }
+    } catch (err: any) {
+      console.error('Unexpected error creating job:', err);
+      alert('An unexpected error occurred. Please try again.');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -561,7 +584,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                         required
                         className="input-field"
                         value={newJob.foreman_id ?? ''}
-                        onChange={e => setNewJob({...newJob, foreman_id: Number(e.target.value)})}
+                        onChange={e => setNewJob({...newJob, foreman_id: e.target.value || null})}
                       >
                         <option value="">Select a Foreman</option>
                         {foremen.map(f => (
@@ -581,8 +604,21 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
                   </div>
                 </div>
                 <div className="pt-4 flex gap-4">
-                  <button type="button" onClick={() => setIsAdding(false)} className="btn-secondary flex-1 py-4">Cancel</button>
-                  <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20">Create Project</button>
+                  <button 
+                    type="button" 
+                    onClick={() => setIsAdding(false)} 
+                    className="btn-secondary flex-1 py-4"
+                    disabled={isCreating}
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    type="submit" 
+                    className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20 disabled:opacity-50"
+                    disabled={isCreating}
+                  >
+                    {isCreating ? 'Creating...' : 'Create Project'}
+                  </button>
                 </div>
               </form>
             </motion.div>
