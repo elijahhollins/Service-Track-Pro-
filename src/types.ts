@@ -81,6 +81,17 @@ export interface Invitation {
   used_at?: string;
 }
 
+export interface InvoiceSettings {
+  id?: number;
+  company_id: number;
+  company_name: string;
+  company_address: string;
+  company_phone: string;
+  company_email: string;
+  logo_initials: string;
+  payment_terms: string;
+}
+
 export interface Invoice {
   id?: number;
   company_id: number;
