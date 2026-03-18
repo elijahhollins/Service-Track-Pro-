@@ -3,7 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS invoice_settings (
   id              BIGSERIAL PRIMARY KEY,
-  company_id      UUID NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,
+  company_id      BIGINT NOT NULL UNIQUE REFERENCES companies(id) ON DELETE CASCADE,
   company_name    TEXT NOT NULL DEFAULT 'Service Track Pro',
   company_address TEXT NOT NULL DEFAULT '123 Service Way, Industrial Park, Springfield, ST 55555',
   company_phone   TEXT NOT NULL DEFAULT '(555) 123-4567',
