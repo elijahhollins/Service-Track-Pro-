@@ -1551,49 +1551,63 @@ const Settings = ({ user }: { user: User }) => {
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0, company_id: user.company_id });
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0, company_id: user.company_id });
 
-  const handleAddEmployee = async (e: React.FormEvent) => {
+  const [pendingEmployees, setPendingEmployees] = useState<Partial<Employee>[]>([]);
+  const [pendingEquipment, setPendingEquipment] = useState<Partial<Equipment>[]>([]);
+  const [pendingMaterials, setPendingMaterials] = useState<Partial<Material>[]>([]);
+
+  const handleAddEmployeeToPending = (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save employee...');
-    console.log('handleAddEmployee called', newEmployee);
+    setPendingEmployees(prev => [...prev, { ...newEmployee, company_id: user.company_id }]);
+    setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
+  };
+
+  const handleSaveAllEmployees = async () => {
+    if (pendingEmployees.length === 0) { setIsAddingEmployee(false); return; }
     if (!user.company_id) {
       alert("Error: Your account is not associated with a company. Please contact support.");
       return;
     }
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('employees').insert([{ ...newEmployee, company_id: user.company_id }]);
+      const { error } = await supabase.from('employees').insert(pendingEmployees as Employee[]);
       if (error) {
-        console.error('Error adding employee:', error);
-        alert(`Failed to add employee: ${error.message}`);
+        console.error('Error adding employees:', error);
+        alert(`Failed to add employees: ${error.message}`);
         return;
       }
+      setPendingEmployees([]);
       setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
       setIsAddingEmployee(false);
       fetchAll();
     } catch (err: any) {
-      console.error('Unexpected error adding employee:', err);
+      console.error('Unexpected error adding employees:', err);
       alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleAddEquipment = async (e: React.FormEvent) => {
+  const handleAddEquipmentToPending = (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save equipment...');
-    console.log('handleAddEquipment called', newEquipment);
+    setPendingEquipment(prev => [...prev, { ...newEquipment, company_id: user.company_id }]);
+    setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
+  };
+
+  const handleSaveAllEquipment = async () => {
+    if (pendingEquipment.length === 0) { setIsAddingEquipment(false); return; }
     if (!user.company_id) {
       alert("Error: Your account is not associated with a company. Please contact support.");
       return;
     }
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('equipment').insert([{ ...newEquipment, company_id: user.company_id }]);
+      const { error } = await supabase.from('equipment').insert(pendingEquipment as Equipment[]);
       if (error) {
         console.error('Error adding equipment:', error);
         alert(`Failed to add equipment: ${error.message}`);
         return;
       }
+      setPendingEquipment([]);
       setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id });
       setIsAddingEquipment(false);
       fetchAll();
@@ -1605,27 +1619,32 @@ const Settings = ({ user }: { user: User }) => {
     }
   };
 
-  const handleAddMaterial = async (e: React.FormEvent) => {
+  const handleAddMaterialToPending = (e: React.FormEvent) => {
     e.preventDefault();
-    alert('Attempting to save material...');
-    console.log('handleAddMaterial called', newMaterial);
+    setPendingMaterials(prev => [...prev, { ...newMaterial, company_id: user.company_id }]);
+    setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
+  };
+
+  const handleSaveAllMaterials = async () => {
+    if (pendingMaterials.length === 0) { setIsAddingMaterial(false); return; }
     if (!user.company_id) {
       alert("Error: Your account is not associated with a company. Please contact support.");
       return;
     }
     setIsSaving(true);
     try {
-      const { error } = await supabase.from('materials').insert([{ ...newMaterial, company_id: user.company_id }]);
+      const { error } = await supabase.from('materials').insert(pendingMaterials as Material[]);
       if (error) {
-        console.error('Error adding material:', error);
-        alert(`Failed to add material: ${error.message}`);
+        console.error('Error adding materials:', error);
+        alert(`Failed to add materials: ${error.message}`);
         return;
       }
+      setPendingMaterials([]);
       setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
       setIsAddingMaterial(false);
       fetchAll();
     } catch (err: any) {
-      console.error('Unexpected error adding material:', err);
+      console.error('Unexpected error adding materials:', err);
       alert(`An unexpected error occurred: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSaving(false);
@@ -1977,29 +1996,49 @@ const Settings = ({ user }: { user: User }) => {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
-                <h3 className="text-xl font-bold font-display">Add Employee</h3>
-                <button onClick={() => setIsAddingEmployee(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <div>
+                  <h3 className="text-xl font-bold font-display">Add Employees</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Add multiple employees before saving.</p>
+                </div>
+                <button onClick={() => { setIsAddingEmployee(false); setPendingEmployees([]); setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id }); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Employee form onSubmit'); handleAddEmployee(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
-                  <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role / Title</label>
-                  <input required className="input-field" placeholder="e.g. Journeyman" value={newEmployee.role ?? ''} onChange={e => setNewEmployee({...newEmployee, role: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
-                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
-                </div>
-                <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEmployee(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
-                    {isSaving ? 'Saving...' : 'Save Employee'}
+              <div className="p-6 space-y-4 overflow-y-auto min-h-0 flex-1">
+                {pendingEmployees.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Pending ({pendingEmployees.length})</label>
+                    {pendingEmployees.map((emp, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2 text-sm">
+                        <span className="font-medium text-slate-800">{emp.name}</span>
+                        <span className="text-slate-500 text-xs">{emp.role} · ${emp.hourly_rate}/hr</span>
+                        <button type="button" onClick={() => setPendingEmployees(prev => prev.filter((_, i) => i !== idx))} className="ml-2 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form onSubmit={handleAddEmployeeToPending} className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Full Name</label>
+                    <input required className="input-field" placeholder="e.g. John Doe" value={newEmployee.name ?? ''} onChange={e => setNewEmployee({...newEmployee, name: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Role / Title</label>
+                    <input required className="input-field" placeholder="e.g. Journeyman" value={newEmployee.role ?? ''} onChange={e => setNewEmployee({...newEmployee, role: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
+                    <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEmployee.hourly_rate ?? ''} onChange={e => setNewEmployee({...newEmployee, hourly_rate: Number(e.target.value)})} />
+                  </div>
+                  <button type="submit" className="btn-secondary w-full flex items-center justify-center gap-2">
+                    <Plus className="w-4 h-4" /> Add to List
                   </button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
+                <button type="button" disabled={isSaving} onClick={() => { setIsAddingEmployee(false); setPendingEmployees([]); setNewEmployee({ name: '', role: '', hourly_rate: 0, company_id: user.company_id }); }} className="btn-secondary flex-1">Cancel</button>
+                <button type="button" disabled={isSaving || pendingEmployees.length === 0} onClick={handleSaveAllEmployees} className="btn-primary flex-1">
+                  {isSaving ? 'Saving...' : `Save ${pendingEmployees.length > 0 ? `(${pendingEmployees.length}) ` : ''}Employee${pendingEmployees.length !== 1 ? 's' : ''}`}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -2008,30 +2047,45 @@ const Settings = ({ user }: { user: User }) => {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
-                <h3 className="text-xl font-bold font-display">Add Equipment</h3>
-                <button onClick={() => setIsAddingEquipment(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <div>
+                  <h3 className="text-xl font-bold font-display">Add Equipment</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Add multiple equipment items before saving.</p>
+                </div>
+                <button onClick={() => { setIsAddingEquipment(false); setPendingEquipment([]); setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id }); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Equipment form onSubmit'); handleAddEquipment(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
-                  <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
-                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
-                </div>
-                <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingEquipment(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button 
-                    type="submit" 
-                    disabled={isSaving} 
-                    onClick={() => console.log('Save Equipment button clicked')}
-                    className="btn-primary flex-1"
-                  >
-                    {isSaving ? 'Saving...' : 'Save Equipment'}
+              <div className="p-6 space-y-4 overflow-y-auto min-h-0 flex-1">
+                {pendingEquipment.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Pending ({pendingEquipment.length})</label>
+                    {pendingEquipment.map((eq, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2 text-sm">
+                        <span className="font-medium text-slate-800">{eq.name}</span>
+                        <span className="text-slate-500 text-xs">${eq.hourly_rate}/hr</span>
+                        <button type="button" onClick={() => setPendingEquipment(prev => prev.filter((_, i) => i !== idx))} className="ml-2 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form onSubmit={handleAddEquipmentToPending} className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Equipment Name</label>
+                    <input required className="input-field" placeholder="e.g. Bucket Truck #102" value={newEquipment.name ?? ''} onChange={e => setNewEquipment({...newEquipment, name: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Hourly Rate ($)</label>
+                    <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newEquipment.hourly_rate ?? ''} onChange={e => setNewEquipment({...newEquipment, hourly_rate: Number(e.target.value)})} />
+                  </div>
+                  <button type="submit" className="btn-secondary w-full flex items-center justify-center gap-2">
+                    <Plus className="w-4 h-4" /> Add to List
                   </button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
+                <button type="button" disabled={isSaving} onClick={() => { setIsAddingEquipment(false); setPendingEquipment([]); setNewEquipment({ name: '', hourly_rate: 0, company_id: user.company_id }); }} className="btn-secondary flex-1">Cancel</button>
+                <button type="button" disabled={isSaving || pendingEquipment.length === 0} onClick={handleSaveAllEquipment} className="btn-primary flex-1">
+                  {isSaving ? 'Saving...' : `Save ${pendingEquipment.length > 0 ? `(${pendingEquipment.length}) ` : ''}Item${pendingEquipment.length !== 1 ? 's' : ''}`}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
@@ -2040,25 +2094,45 @@ const Settings = ({ user }: { user: User }) => {
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
-                <h3 className="text-xl font-bold font-display">Add Material</h3>
-                <button onClick={() => setIsAddingMaterial(false)}><X className="w-6 h-6 text-slate-400" /></button>
+                <div>
+                  <h3 className="text-xl font-bold font-display">Add Materials</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Add multiple materials before saving.</p>
+                </div>
+                <button onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id }); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
-              <form onSubmit={(e) => { console.log('Material form onSubmit'); handleAddMaterial(e); }} className="p-6 space-y-4 overflow-y-auto min-h-0">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
-                  <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unit Price ($)</label>
-                  <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
-                </div>
-                <div className="pt-4 flex gap-3">
-                  <button type="button" disabled={isSaving} onClick={() => setIsAddingMaterial(false)} className="btn-secondary flex-1">Cancel</button>
-                  <button type="submit" disabled={isSaving} className="btn-primary flex-1">
-                    {isSaving ? 'Saving...' : 'Save Material'}
+              <div className="p-6 space-y-4 overflow-y-auto min-h-0 flex-1">
+                {pendingMaterials.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Pending ({pendingMaterials.length})</label>
+                    {pendingMaterials.map((mat, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2 text-sm">
+                        <span className="font-medium text-slate-800">{mat.name}</span>
+                        <span className="text-slate-500 text-xs">${mat.unit_price}/unit</span>
+                        <button type="button" onClick={() => setPendingMaterials(prev => prev.filter((_, i) => i !== idx))} className="ml-2 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form onSubmit={handleAddMaterialToPending} className="space-y-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
+                    <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unit Price ($)</label>
+                    <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
+                  </div>
+                  <button type="submit" className="btn-secondary w-full flex items-center justify-center gap-2">
+                    <Plus className="w-4 h-4" /> Add to List
                   </button>
-                </div>
-              </form>
+                </form>
+              </div>
+              <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
+                <button type="button" disabled={isSaving} onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id }); }} className="btn-secondary flex-1">Cancel</button>
+                <button type="button" disabled={isSaving || pendingMaterials.length === 0} onClick={handleSaveAllMaterials} className="btn-primary flex-1">
+                  {isSaving ? 'Saving...' : `Save ${pendingMaterials.length > 0 ? `(${pendingMaterials.length}) ` : ''}Material${pendingMaterials.length !== 1 ? 's' : ''}`}
+                </button>
+              </div>
             </motion.div>
           </div>
         )}
