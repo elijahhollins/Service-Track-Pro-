@@ -25,7 +25,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice } from './types';
+import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice, InvoiceSettings } from './types';
 import { supabase } from './supabase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -648,6 +648,7 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
 
   const fetchJob = async () => {
     const { data: jobData, error: jobError } = await supabase
@@ -688,17 +689,19 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
     fetchJob();
     fetchInvoices();
     const fetchData = async () => {
-      const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+      const [empRes, eqRes, matRes, tempRes, settingsRes] = await Promise.all([
         supabase.from('employees').select('*').eq('company_id', user.company_id),
         supabase.from('equipment').select('*').eq('company_id', user.company_id),
         supabase.from('materials').select('*').eq('company_id', user.company_id),
-        supabase.from('templates').select('*').eq('company_id', user.company_id)
+        supabase.from('templates').select('*').eq('company_id', user.company_id),
+        supabase.from('invoice_settings').select('*').eq('company_id', user.company_id).maybeSingle(),
       ]);
       
       if (empRes.data) setEmployees(empRes.data);
       if (eqRes.data) setEquipment(eqRes.data);
       if (matRes.data) setMaterials(matRes.data);
       if (tempRes.data) setTemplates(tempRes.data);
+      if (settingsRes.data) setInvoiceSettings(settingsRes.data);
     };
     fetchData();
   }, [jobId]);
@@ -917,6 +920,7 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             equipment={equipment} 
             materials={materials}
             invoice={selectedInvoice || undefined}
+            invoiceSettings={invoiceSettings}
             onClose={() => {
               setIsViewingInvoice(false);
               setSelectedInvoice(null);
@@ -1275,16 +1279,28 @@ const PDF_COLORS = {
   slate900  : [15, 23, 42]    as [number,number,number],
 };
 
-const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, invoice }: { 
+const DEFAULT_INVOICE_SETTINGS: Omit<InvoiceSettings, 'id' | 'company_id'> = {
+  company_name: 'Service Track Pro',
+  company_address: '123 Service Way, Industrial Park, Springfield, ST 55555',
+  company_phone: '(555) 123-4567',
+  company_email: 'billing@servicetrackpro.com',
+  logo_initials: 'STP',
+  payment_terms: 'Payment due within 30 days. Checks payable to the company above. Late payments subject to 1.5% monthly finance charge.',
+};
+
+const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, invoice, invoiceSettings }: { 
   job: Job, 
   employees: Employee[], 
   equipment: Equipment[], 
   materials: Material[],
   onClose: () => void,
   onSave?: () => void,
-  invoice?: Invoice
+  invoice?: Invoice,
+  invoiceSettings?: InvoiceSettings | null,
 }) => {
   const [isSaving, setIsSaving] = useState(false);
+
+  const branding = invoiceSettings ?? DEFAULT_INVOICE_SETTINGS;
   
   // Use saved data if viewing a saved invoice, otherwise calculate from current logs
   const laborTotal = invoice ? invoice.labor_total : (job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0);
@@ -1323,13 +1339,13 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     pdf.roundedRect(margin, 10, 14, 14, 2, 2, 'F');
     pdf.setFont('helvetica', 'bold');
     text(navyDark); pdf.setFontSize(9);
-    pdf.text('STP', margin + 2.5, 19.5);
+    pdf.text(branding.logo_initials.slice(0, 4), margin + 2.5, 19.5);
 
     text(white); pdf.setFontSize(18); pdf.setFont('helvetica', 'bold');
-    pdf.text('SERVICE TRACK PRO', margin + 18, 18);
+    pdf.text(branding.company_name.toUpperCase(), margin + 18, 18);
     text(slate300); pdf.setFontSize(7.5); pdf.setFont('helvetica', 'normal');
-    pdf.text('123 Service Way, Industrial Park  •  Springfield, ST 55555', margin + 18, 24);
-    pdf.text('(555) 123-4567  •  billing@servicetrackpro.com', margin + 18, 29.5);
+    pdf.text(branding.company_address, margin + 18, 24);
+    pdf.text(`${branding.company_phone}  •  ${branding.company_email}`, margin + 18, 29.5);
 
     // Right – giant "INVOICE" label
     text(goldLight); pdf.setFontSize(38); pdf.setFont('helvetica', 'bold');
@@ -1507,7 +1523,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     pdf.text('THANK YOU FOR YOUR BUSINESS', pageW / 2, footerY + 6, { align: 'center' });
     text(slate300); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
     pdf.text(
-      'Payment due within 30 days. Checks payable to Service Track Pro. Late payments subject to 1.5% monthly finance charge.',
+      branding.payment_terms,
       pageW / 2, footerY + 12, { align: 'center', maxWidth: contentW }
     );
     // page number
@@ -1591,15 +1607,14 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
           <div className="flex flex-col md:flex-row justify-between items-start border-b-4 border-slate-900 pb-10 mb-12 gap-8">
             <div>
               <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 bg-brand rounded-2xl flex items-center justify-center shadow-xl shadow-brand/20">
-                  <Briefcase className="w-7 h-7 text-white" />
+                <div className="w-12 h-12 bg-brand rounded-2xl flex items-center justify-center shadow-xl shadow-brand/20 text-white font-black text-sm">
+                  {branding.logo_initials.slice(0, 4)}
                 </div>
-                <h1 className="text-3xl font-black uppercase tracking-tighter font-display">Service Track Pro</h1>
+                <h1 className="text-3xl font-black uppercase tracking-tighter font-display">{branding.company_name}</h1>
               </div>
               <div className="space-y-1 text-slate-500 text-sm md:text-base">
-                <p className="font-bold text-slate-900">123 Service Way, Industrial Park</p>
-                <p>Springfield, ST 55555</p>
-                <p>(555) 123-4567 • billing@servicetrackpro.com</p>
+                <p className="font-bold text-slate-900">{branding.company_address}</p>
+                <p>{branding.company_phone} • {branding.company_email}</p>
               </div>
             </div>
             <div className="text-left md:text-right w-full md:w-auto">
@@ -1706,10 +1721,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
           <div className="mt-32 pt-12 border-t border-slate-100 text-center">
             <p className="text-sm font-black uppercase tracking-[0.2em] text-slate-900 mb-4">Thank you for your business</p>
             <div className="max-w-md mx-auto space-y-2">
-              <p className="text-xs text-slate-400 leading-relaxed italic">
-                Please make checks payable to <span className="font-bold text-slate-600">Service Track Pro</span>. 
-                Payment is due within 30 days of invoice date. Late payments may be subject to a 1.5% monthly finance charge.
-              </p>
+              <p className="text-xs text-slate-400 leading-relaxed italic">{branding.payment_terms}</p>
             </div>
           </div>
         </div>
@@ -1734,6 +1746,18 @@ const Settings = ({ user }: { user: User }) => {
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
   const [isAddingTemplate, setIsAddingTemplate] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingInvoiceSettings, setIsSavingInvoiceSettings] = useState(false);
+  const [invoiceSettingsSaved, setInvoiceSettingsSaved] = useState(false);
+
+  const [invoiceSettings, setInvoiceSettings] = useState<Omit<InvoiceSettings, 'id'>>({
+    company_id: user.company_id!,
+    company_name: '',
+    company_address: '',
+    company_phone: '',
+    company_email: '',
+    logo_initials: '',
+    payment_terms: '',
+  });
 
   const [newTemplateName, setNewTemplateName] = useState('');
   const [templateEmployees, setTemplateEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>([]);
@@ -1742,11 +1766,12 @@ const Settings = ({ user }: { user: User }) => {
 
   const fetchAll = async () => {
     console.log('Fetching all settings data for company:', user.company_id);
-    const [empRes, eqRes, matRes, tempRes] = await Promise.all([
+    const [empRes, eqRes, matRes, tempRes, invSettingsRes] = await Promise.all([
       supabase.from('employees').select('*').eq('company_id', user.company_id),
       supabase.from('equipment').select('*').eq('company_id', user.company_id),
       supabase.from('materials').select('*').eq('company_id', user.company_id),
-      supabase.from('templates').select('*').eq('company_id', user.company_id)
+      supabase.from('templates').select('*').eq('company_id', user.company_id),
+      supabase.from('invoice_settings').select('*').eq('company_id', user.company_id).maybeSingle(),
     ]);
     
     if (empRes.error) console.error('Error fetching employees:', empRes.error);
@@ -1758,6 +1783,15 @@ const Settings = ({ user }: { user: User }) => {
     if (eqRes.data) setEquipment(eqRes.data);
     if (matRes.data) setMaterials(matRes.data);
     if (tempRes.data) setTemplates(tempRes.data);
+    if (invSettingsRes.data) {
+      setInvoiceSettings(invSettingsRes.data);
+    } else {
+      // Pre-fill with defaults so the form isn't blank
+      setInvoiceSettings({
+        company_id: user.company_id!,
+        ...DEFAULT_INVOICE_SETTINGS,
+      });
+    }
   };
 
   useEffect(() => {
@@ -1767,6 +1801,25 @@ const Settings = ({ user }: { user: User }) => {
   const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0, company_id: user.company_id });
   const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0, company_id: user.company_id });
+
+  const handleSaveInvoiceSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user.company_id) return;
+    setIsSavingInvoiceSettings(true);
+    try {
+      const payload = invoiceSettings;
+      const { error } = await supabase
+        .from('invoice_settings')
+        .upsert([payload], { onConflict: 'company_id' });
+      if (error) throw error;
+      setInvoiceSettingsSaved(true);
+      setTimeout(() => setInvoiceSettingsSaved(false), 3000);
+    } catch (err: any) {
+      alert(`Failed to save invoice settings: ${err.message}`);
+    } finally {
+      setIsSavingInvoiceSettings(false);
+    }
+  };
 
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2125,6 +2178,99 @@ const Settings = ({ user }: { user: User }) => {
           </div>
         </section>
       </div>
+      )}
+
+      {/* Invoice Branding — admin only */}
+      {user.role === 'admin' && (
+      <section className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+            <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
+              <FileText className="w-5 h-5 text-amber-500" />
+            </div>
+            Invoice Branding
+          </h3>
+        </div>
+        <p className="text-sm text-slate-500">Customize the company details that appear on every PDF invoice.</p>
+
+        <form onSubmit={handleSaveInvoiceSettings} className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Name</label>
+              <input
+                className="input-field"
+                placeholder="e.g. Apex Construction Co."
+                value={invoiceSettings.company_name}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, company_name: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Logo Initials (up to 4 chars)</label>
+              <input
+                className="input-field"
+                maxLength={4}
+                placeholder="e.g. ACC"
+                value={invoiceSettings.logo_initials}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, logo_initials: e.target.value.slice(0, 4) })}
+              />
+              <p className="text-[10px] text-slate-400 mt-1">Displayed in the logo box on the PDF header.</p>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Company Address</label>
+              <input
+                className="input-field"
+                placeholder="e.g. 456 Builder Blvd, Suite 10, Denver, CO 80202"
+                value={invoiceSettings.company_address}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, company_address: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Phone Number</label>
+              <input
+                className="input-field"
+                placeholder="e.g. (720) 555-0100"
+                value={invoiceSettings.company_phone}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, company_phone: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Billing Email</label>
+              <input
+                type="email"
+                className="input-field"
+                placeholder="e.g. billing@apexconstruction.com"
+                value={invoiceSettings.company_email}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, company_email: e.target.value })}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Payment Terms (footer text)</label>
+              <textarea
+                className="input-field resize-none"
+                rows={2}
+                placeholder="e.g. Payment due within 30 days. Late payments subject to 1.5% monthly finance charge."
+                value={invoiceSettings.payment_terms}
+                onChange={e => setInvoiceSettings({ ...invoiceSettings, payment_terms: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 pt-2">
+            <button
+              type="submit"
+              disabled={isSavingInvoiceSettings}
+              className="btn-primary flex items-center gap-2 disabled:opacity-50"
+            >
+              {isSavingInvoiceSettings ? 'Saving…' : 'Save Invoice Settings'}
+            </button>
+            {invoiceSettingsSaved && (
+              <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-600">
+                <Check className="w-4 h-4" /> Saved successfully
+              </span>
+            )}
+          </div>
+        </form>
+      </section>
       )}
 
       {/* Templates — visible to admin and foreman */}
