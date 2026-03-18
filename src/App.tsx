@@ -27,8 +27,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice } from './types';
 import { supabase } from './supabase';
-import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // --- Components ---
 
@@ -1262,6 +1262,19 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
   );
 };
 
+// ── PDF colour palette (module-level for reuse/performance) ───────────────
+const PDF_COLORS = {
+  navyDark  : [10, 20, 45]    as [number,number,number],
+  navyMid   : [18, 32, 70]    as [number,number,number],
+  gold      : [196, 150, 20]  as [number,number,number],
+  goldLight : [230, 190, 70]  as [number,number,number],
+  white     : [255, 255, 255] as [number,number,number],
+  slate100  : [241, 245, 249] as [number,number,number],
+  slate300  : [148, 163, 184] as [number,number,number],
+  slate700  : [51, 65, 85]    as [number,number,number],
+  slate900  : [15, 23, 42]    as [number,number,number],
+};
+
 const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, invoice }: { 
   job: Job, 
   employees: Employee[], 
@@ -1284,24 +1297,228 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   const invoiceDate = invoice ? new Date(invoice.date) : new Date();
   const dueDate = invoice ? new Date(invoice.due_date) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-  const handleDownloadPDF = async () => {
-    const element = document.getElementById('invoice-content');
-    if (!element) return;
-    
-    const canvas = await html2canvas(element, {
-      scale: 2,
-      useCORS: true,
-      logging: false
+  const handleDownloadPDF = () => {
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();   // 210
+    const pageH = pdf.internal.pageSize.getHeight();  // 297
+    const margin = 14;
+    const contentW = pageW - margin * 2;
+
+    const { navyDark, navyMid, gold, goldLight, white, slate100, slate300, slate700, slate900 } = PDF_COLORS;
+
+    // ── Helper: set fill ─────────────────────────────────────────────────
+    const fill  = (c: [number,number,number]) => pdf.setFillColor(...c);
+    const stroke= (c: [number,number,number]) => pdf.setDrawColor(...c);
+    const text  = (c: [number,number,number]) => pdf.setTextColor(...c);
+
+    // ════════════════════════════════════════════════════════════════════
+    // HEADER BAND
+    // ════════════════════════════════════════════════════════════════════
+    fill(navyDark); pdf.rect(0, 0, pageW, 58, 'F');
+    // gold accent stripe at very top
+    fill(gold); pdf.rect(0, 0, pageW, 3, 'F');
+
+    // Left – company logo box + name
+    fill(gold);
+    pdf.roundedRect(margin, 10, 14, 14, 2, 2, 'F');
+    pdf.setFont('helvetica', 'bold');
+    text(navyDark); pdf.setFontSize(9);
+    pdf.text('STP', margin + 2.5, 19.5);
+
+    text(white); pdf.setFontSize(18); pdf.setFont('helvetica', 'bold');
+    pdf.text('SERVICE TRACK PRO', margin + 18, 18);
+    text(slate300); pdf.setFontSize(7.5); pdf.setFont('helvetica', 'normal');
+    pdf.text('123 Service Way, Industrial Park  •  Springfield, ST 55555', margin + 18, 24);
+    pdf.text('(555) 123-4567  •  billing@servicetrackpro.com', margin + 18, 29.5);
+
+    // Right – giant "INVOICE" label
+    text(goldLight); pdf.setFontSize(38); pdf.setFont('helvetica', 'bold');
+    pdf.text('INVOICE', pageW - margin, 26, { align: 'right' });
+
+    // Invoice meta under the big label
+    text(white); pdf.setFontSize(8.5); pdf.setFont('helvetica', 'bold');
+    pdf.text(`No: ${invoiceNumber}`, pageW - margin, 34, { align: 'right' });
+    text(slate300); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Date:  ${invoiceDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, pageW - margin, 40, { align: 'right' });
+    pdf.text(`Due:   ${dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, pageW - margin, 46, { align: 'right' });
+
+    // gold bottom border of header
+    fill(gold); pdf.rect(0, 58, pageW, 1.5, 'F');
+
+    // ════════════════════════════════════════════════════════════════════
+    // BILL-TO / PROJECT DETAIL CARDS
+    // ════════════════════════════════════════════════════════════════════
+    const cardTop = 65;
+    const cardH   = 34;
+    const cardW   = (contentW - 6) / 2;
+
+    // Card 1 – Bill To
+    fill(slate100); stroke(slate100); pdf.roundedRect(margin, cardTop, cardW, cardH, 2, 2, 'FD');
+    fill(gold); pdf.roundedRect(margin, cardTop, 3, cardH, 1.5, 1.5, 'F');
+    text(slate300); pdf.setFontSize(6.5); pdf.setFont('helvetica', 'bold');
+    pdf.text('BILL TO', margin + 7, cardTop + 8);
+    text(slate900); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
+    pdf.text(job.customer_name || 'N/A', margin + 7, cardTop + 16);
+    text(slate700); pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
+    const addrLines = pdf.splitTextToSize(job.address || '', cardW - 10);
+    const displayAddr = addrLines.length > 2
+      ? [addrLines[0], addrLines[1].replace(/.$/, '…')]
+      : addrLines.slice(0, 2);
+    pdf.text(displayAddr, margin + 7, cardTop + 23);
+
+    // Card 2 – Project
+    const card2X = margin + cardW + 6;
+    fill(slate100); stroke(slate100); pdf.roundedRect(card2X, cardTop, cardW, cardH, 2, 2, 'FD');
+    fill(navyMid); pdf.roundedRect(card2X, cardTop, 3, cardH, 1.5, 1.5, 'F');
+    text(slate300); pdf.setFontSize(6.5); pdf.setFont('helvetica', 'bold');
+    pdf.text('PROJECT DETAILS', card2X + 7, cardTop + 8);
+    text(slate900); pdf.setFontSize(11); pdf.setFont('helvetica', 'bold');
+    const projName = pdf.splitTextToSize(job.job_name || 'N/A', cardW - 10);
+    pdf.text(projName[0], card2X + 7, cardTop + 16);
+    text(slate700); pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Job #: ${job.job_number}`, card2X + 7, cardTop + 23);
+    pdf.text(`Status: ${(job.status || '').toUpperCase()}`, card2X + 7, cardTop + 29);
+
+    // ════════════════════════════════════════════════════════════════════
+    // LINE ITEMS – one autoTable per daily log
+    // ════════════════════════════════════════════════════════════════════
+    let cursorY = cardTop + cardH + 8;
+
+    (displayLogs || []).forEach((log: any, logIdx: number) => {
+      const logDate = new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+      // Section header
+      if (cursorY > pageH - 60) { pdf.addPage(); cursorY = 18; }
+      fill(navyMid); pdf.roundedRect(margin, cursorY, contentW, 10, 2, 2, 'F');
+      text(goldLight); pdf.setFontSize(8); pdf.setFont('helvetica', 'bold');
+      pdf.text(`Daily Log — ${logDate}`, margin + 4, cursorY + 6.8);
+      if (log.notes) {
+        text(slate300); pdf.setFont('helvetica', 'italic'); pdf.setFontSize(7);
+        const notesText = log.notes.length > 70 ? log.notes.slice(0, 69) + '…' : log.notes;
+        pdf.text(notesText, pageW - margin - 2, cursorY + 6.8, { align: 'right' });
+      }
+      cursorY += 12;
+
+      // Build rows
+      const rows: (string | number)[][] = [];
+      (log.data.employees || []).forEach((e: any) => {
+        const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+        rows.push([`Labor — ${empName}`, `${e.hours}h`, `$${Number(e.rate).toFixed(2)}`, `$${(e.hours * e.rate).toFixed(2)}`]);
+      });
+      (log.data.equipment || []).forEach((e: any) => {
+        const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+        rows.push([`Equipment — ${eqName}`, `${e.hours}h`, `$${Number(e.rate).toFixed(2)}`, `$${(e.hours * e.rate).toFixed(2)}`]);
+      });
+      (log.data.materials || []).forEach((m: any) => {
+        rows.push([`Material — ${m.name}`, `${m.quantity}`, `$${Number(m.unitPrice).toFixed(2)}`, `$${(m.quantity * m.unitPrice).toFixed(2)}`]);
+      });
+
+      if (rows.length === 0) {
+        rows.push(['No items recorded', '', '', '']);
+      }
+
+      autoTable(pdf, {
+        startY: cursorY,
+        margin: { left: margin, right: margin },
+        tableWidth: contentW,
+        head: [['DESCRIPTION', 'QTY / HRS', 'UNIT RATE', 'AMOUNT']],
+        body: rows,
+        theme: 'plain',
+        styles: {
+          font: 'helvetica',
+          fontSize: 8.5,
+          textColor: slate700,
+          cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+          lineColor: [220, 228, 240],
+          lineWidth: 0.3,
+        },
+        headStyles: {
+          fillColor: [229, 234, 245],
+          textColor: slate900,
+          fontStyle: 'bold',
+          fontSize: 7,
+          lineColor: [196, 150, 20],
+          lineWidth: { bottom: 1 },
+        },
+        columnStyles: {
+          0: { cellWidth: contentW * 0.52 },
+          1: { cellWidth: contentW * 0.14, halign: 'center' },
+          2: { cellWidth: contentW * 0.17, halign: 'right' },
+          3: { cellWidth: contentW * 0.17, halign: 'right', fontStyle: 'bold', textColor: slate900 },
+        },
+        alternateRowStyles: { fillColor: [247, 249, 252] },
+        didDrawPage: (_data: any) => {
+          // Redraw gold stripe on new pages
+          fill(gold); pdf.rect(0, 0, pageW, 3, 'F');
+        },
+      });
+
+      cursorY = (pdf as any).lastAutoTable.finalY + 6;
     });
-    
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const imgProps = pdf.getImageProperties(imgData);
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`Invoice-${job.job_number}-${new Date().toISOString().split('T')[0]}.pdf`);
+
+    // ════════════════════════════════════════════════════════════════════
+    // TOTALS SECTION
+    // ════════════════════════════════════════════════════════════════════
+    const totalsH = 52;
+    if (cursorY + totalsH > pageH - 25) { pdf.addPage(); cursorY = 18; fill(gold); pdf.rect(0, 0, pageW, 3, 'F'); }
+
+    cursorY += 4;
+    // gold divider line
+    stroke(gold); pdf.setLineWidth(0.8);
+    pdf.line(margin, cursorY, pageW - margin, cursorY);
+    cursorY += 6;
+
+    const totalsX = pageW - margin - 75;
+    const totalsLabelX = totalsX;
+    const totalsValX = pageW - margin;
+
+    const totals = [
+      ['Labor Subtotal', `$${laborTotal.toFixed(2)}`],
+      ['Equipment Subtotal', `$${equipmentTotal.toFixed(2)}`],
+      ['Material Subtotal', `$${materialTotal.toFixed(2)}`],
+    ];
+
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+    totals.forEach(([label, val]) => {
+      text(slate700); pdf.text(label, totalsLabelX, cursorY);
+      text(slate900); pdf.setFont('helvetica', 'bold');
+      pdf.text(val, totalsValX, cursorY, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      cursorY += 8;
+    });
+
+    // Grand Total box
+    cursorY += 2;
+    fill(navyDark); pdf.roundedRect(totalsX - 4, cursorY - 5, 75 + 4, 16, 2, 2, 'F');
+    fill(gold); pdf.roundedRect(totalsX - 4, cursorY - 5, 3.5, 16, 1, 1, 'F');
+    text(white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
+    pdf.text('TOTAL DUE', totalsLabelX + 2, cursorY + 5);
+    text(goldLight); pdf.setFontSize(13);
+    pdf.text(`$${grandTotal.toFixed(2)}`, totalsValX, cursorY + 5.5, { align: 'right' });
+    cursorY += 20;
+
+    // ════════════════════════════════════════════════════════════════════
+    // FOOTER
+    // ════════════════════════════════════════════════════════════════════
+    const footerY = pageH - 22;
+    stroke(slate300); pdf.setLineWidth(0.3);
+    pdf.line(margin, footerY, pageW - margin, footerY);
+    text(slate700); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
+    pdf.text('THANK YOU FOR YOUR BUSINESS', pageW / 2, footerY + 6, { align: 'center' });
+    text(slate300); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
+    pdf.text(
+      'Payment due within 30 days. Checks payable to Service Track Pro. Late payments subject to 1.5% monthly finance charge.',
+      pageW / 2, footerY + 12, { align: 'center', maxWidth: contentW }
+    );
+    // page number
+    const pageCount = (pdf as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      text(slate300); pdf.setFontSize(6.5);
+      pdf.text(`Page ${i} of ${pageCount}`, pageW - margin, pageH - 5, { align: 'right' });
+    }
+
+    pdf.save(`Invoice-${invoiceNumber}-${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const handleSaveInvoice = async () => {
