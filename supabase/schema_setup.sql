@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- ---------------------------------------------------------------------------
 
 -- Returns the company_id (UUID) of the currently authenticated user.
+-- DROP first so we can change the return type if an old BIGINT version exists.
+DROP FUNCTION IF EXISTS get_my_company_id() CASCADE;
 CREATE OR REPLACE FUNCTION get_my_company_id()
 RETURNS UUID
 LANGUAGE sql

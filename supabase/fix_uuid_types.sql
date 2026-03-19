@@ -112,7 +112,9 @@ ALTER TABLE users
 
 -- ---------------------------------------------------------------------------
 -- Recreate get_my_company_id() to return UUID (idempotent)
+-- DROP first so PostgreSQL allows changing the return type from BIGINT → UUID.
 -- ---------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS get_my_company_id() CASCADE;
 CREATE OR REPLACE FUNCTION get_my_company_id()
 RETURNS UUID
 LANGUAGE sql
