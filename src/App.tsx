@@ -2949,38 +2949,17 @@ const CompanySetup = ({ user, onComplete }: { user: User, onComplete: (companyId
 
     try {
       console.log('Starting company setup for user:', user.id);
-      // 1. Create company
-      const { data: companyData, error: companyError } = await supabase
-        .from('companies')
-        .insert([{ name: companyName }])
-        .select()
-        .single();
+      // Create company and link user via SECURITY DEFINER RPC (bypasses RLS)
+      const { data: companyId, error: companyError } = await supabase
+        .rpc('create_company', { company_name: companyName });
 
       if (companyError) {
         console.error('Company creation error:', companyError);
         throw companyError;
       }
-      console.log('Company created successfully:', companyData.id);
+      console.log('Company created successfully:', companyId);
 
-      // 2. Update user profile
-      console.log('Updating user profile with company_id:', companyData.id);
-      const { error: userError } = await supabase
-        .from('users')
-        .upsert({ 
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          company_id: companyData.id 
-        });
-
-      if (userError) {
-        console.error('User profile update error:', userError);
-        throw userError;
-      }
-      console.log('User profile updated successfully');
-
-      onComplete(companyData.id);
+      onComplete(companyId as string);
     } catch (err: any) {
       console.error('Full error object:', err);
       setError(err.message || 'Failed to create company');
