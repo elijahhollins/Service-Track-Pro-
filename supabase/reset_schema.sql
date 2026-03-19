@@ -61,17 +61,18 @@ CREATE TABLE companies (
 );
 
 -- ---------------------------------------------------------------------------
--- STEP 5: Re-add FK on public.users → companies (now UUID ↔ UUID, correct)
+-- STEP 5: Ensure company_id is UUID, then re-add FK → companies
 -- ---------------------------------------------------------------------------
-ALTER TABLE public.users
-  ADD CONSTRAINT users_company_id_fkey
-  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL;
-
--- Ensure the column itself is UUID (in case an old script made it BIGINT).
+-- Change the column type first (in case an old script created it as BIGINT).
 -- All values are NULL at this point (set above), so USING NULL::uuid is safe
 -- and avoids any type-cast issues with BIGINT → UUID conversions.
 ALTER TABLE public.users
   ALTER COLUMN company_id TYPE UUID USING NULL::uuid;
+
+-- Now that both sides are UUID, the FK constraint can be created safely.
+ALTER TABLE public.users
+  ADD CONSTRAINT users_company_id_fkey
+  FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL;
 
 -- ---------------------------------------------------------------------------
 -- STEP 6: Recreate helper functions (must exist before RLS policies)
