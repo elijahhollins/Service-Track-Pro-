@@ -2638,7 +2638,7 @@ const UserManagement = ({ user }: { user: User }) => {
     }
   };
 
-  const handlePromote = async (id: number) => {
+  const handlePromote = async (id: string) => {
     if (!confirm('Are you sure you want to promote this user to Admin? This action cannot be undone.')) return;
     
     const { error } = await supabase
@@ -2652,7 +2652,7 @@ const UserManagement = ({ user }: { user: User }) => {
     }
   };
 
-  const handleDeleteUser = async (id: number, email: string) => {
+  const handleDeleteUser = async (id: string, email: string) => {
     if (email === user.email) {
       alert("You cannot delete your own profile.");
       return;
@@ -2937,7 +2937,7 @@ const SuperAdminDashboard = () => {
   );
 };
 
-const CompanySetup = ({ user, onComplete }: { user: User, onComplete: (companyId: number) => void }) => {
+const CompanySetup = ({ user, onComplete }: { user: User, onComplete: (companyId: string) => void }) => {
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
