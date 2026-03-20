@@ -1,12 +1,12 @@
 export interface Company {
-  id: number;
+  id: string;
   name: string;
   created_at?: string;
 }
 
 export interface Employee {
   id?: number;
-  company_id: number;
+  company_id: string;
   name: string;
   role: string;
   hourly_rate: number;
@@ -14,14 +14,14 @@ export interface Employee {
 
 export interface Equipment {
   id?: number;
-  company_id: number;
+  company_id: string;
   name: string;
   hourly_rate: number;
 }
 
 export interface Material {
   id?: number;
-  company_id: number;
+  company_id: string;
   name: string;
   unit_price: number;
 }
@@ -42,7 +42,7 @@ export interface WorkLog {
 
 export interface User {
   id: string;
-  company_id: number | null;
+  company_id: string | null;
   name: string;
   email: string;
   role: 'super_admin' | 'admin' | 'foreman';
@@ -50,7 +50,7 @@ export interface User {
 
 export interface Job {
   id?: number;
-  company_id: number;
+  company_id: string;
   customer_name: string;
   job_name: string;
   job_number: string;
@@ -65,14 +65,14 @@ export interface Job {
 
 export interface Template {
   id?: number;
-  company_id: number;
+  company_id: string;
   name: string;
   data: WorkLogEntry;
 }
 
 export interface Invitation {
   id: string;
-  company_id: number | null;
+  company_id: string | null;
   role: 'admin' | 'foreman';
   token: string;
   email?: string;
@@ -81,9 +81,20 @@ export interface Invitation {
   used_at?: string;
 }
 
+export interface InvoiceSettings {
+  id?: number;
+  company_id: string;
+  company_name: string;
+  company_address: string;
+  company_phone: string;
+  company_email: string;
+  logo_initials: string;
+  payment_terms: string;
+}
+
 export interface Invoice {
   id?: number;
-  company_id: number;
+  company_id: string;
   job_id: number;
   invoice_number: string;
   date: string;
