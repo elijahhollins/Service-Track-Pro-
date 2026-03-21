@@ -22,13 +22,16 @@ import {
   Filter,
   Shield,
   Link as LinkIcon,
-  ExternalLink
+  ExternalLink,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice, InvoiceSettings } from './types';
 import { supabase } from './supabase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Papa from 'papaparse';
+import readXlsxFile from 'read-excel-file/browser';
 
 // --- Components ---
 
@@ -1921,6 +1924,76 @@ const Settings = ({ user }: { user: User }) => {
     }
   };
 
+  const handleImportSpreadsheet = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const parsed: Partial<Material>[] = [];
+
+    try {
+      if (ext === 'csv') {
+        const text = await file.text();
+        const result = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
+        if (result.errors.length > 0) {
+          alert(`CSV parse error: ${result.errors[0].message}`);
+          return;
+        }
+        const firstRow = result.data[0] ?? {};
+        const nameKey = Object.keys(firstRow).find(k => /name/i.test(k));
+        const priceKey = Object.keys(firstRow).find(k => /price|cost|rate|unit/i.test(k));
+        if (!nameKey || !priceKey) {
+          alert('Could not find required columns in the CSV.\nExpected a column matching "name" and a column matching "price", "cost", "rate", or "unit".');
+          return;
+        }
+        for (const row of result.data) {
+          const name = row[nameKey]?.trim();
+          const unit_price = parseFloat(row[priceKey]);
+          if (name && !isNaN(unit_price)) {
+            parsed.push({ name, unit_price, company_id: user.company_id });
+          }
+        }
+      } else if (ext === 'xlsx' || ext === 'xls') {
+        const rows = await readXlsxFile(file);
+        if (rows.length < 2) {
+          alert('The spreadsheet appears to be empty or has no data rows.');
+          return;
+        }
+        const headers = rows[0].map(h => String(h ?? '').toLowerCase().trim());
+        const nameIdx = headers.findIndex(h => /name/.test(h));
+        const priceIdx = headers.findIndex(h => /price|cost|rate|unit/.test(h));
+        if (nameIdx === -1 || priceIdx === -1) {
+          alert('Could not find required columns in the spreadsheet.\nExpected a column matching "name" and a column matching "price", "cost", "rate", or "unit".');
+          return;
+        }
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const name = String(row[nameIdx] ?? '').trim();
+          const unit_price = parseFloat(String(row[priceIdx] ?? ''));
+          if (name && !isNaN(unit_price)) {
+            parsed.push({ name, unit_price, company_id: user.company_id });
+          }
+        }
+      } else {
+        alert('Unsupported file type. Please upload a .csv or .xlsx file.');
+        return;
+      }
+
+      if (parsed.length === 0) {
+        alert('No valid rows found in the file. Ensure the file has columns matching "name" and "price" (or cost/rate/unit) with at least one data row.');
+        return;
+      }
+
+      setPendingMaterials(prev => [...prev, ...parsed]);
+      setIsAddingMaterial(true);
+    } catch (err: any) {
+      console.error('Error importing spreadsheet:', err);
+      alert(`Failed to import file: ${err.message || 'Unknown error'}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   const handleDeleteEmployee = async (id: number) => {
     if (!confirm('Are you sure you want to delete this employee?')) return;
     await supabase.from('employees').delete().eq('id', id).eq('company_id', user.company_id);
@@ -2151,9 +2224,25 @@ const Settings = ({ user }: { user: User }) => {
               </div>
               Materials Price List
             </h3>
-            <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all">
-              <Plus className="w-5 h-5" />
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                className="hidden"
+                id="material-import-file"
+                onChange={handleImportSpreadsheet}
+              />
+              <label
+                htmlFor="material-import-file"
+                className="p-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-600 cursor-pointer transition-all"
+                title="Import CSV or Excel"
+              >
+                <Upload className="w-5 h-5" />
+              </label>
+              <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all" title="Add material">
+                <Plus className="w-5 h-5" />
+              </button>
+            </div>
           </div>
 
           <div className="relative">
