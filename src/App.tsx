@@ -75,74 +75,80 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
     
     try {
       if (isSignUp) {
-        // 1. Sign up to Supabase Auth first to get a UID
+        // 1. Attempt to create the auth account.
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email,
           password,
         });
 
-        if (authError) throw authError;
-        if (!authData.user) throw new Error('Signup failed');
+        // Determine whether this email already has an auth account.
+        // Supabase v2 signals duplicates by returning identities:[] instead of
+        // an error (to avoid leaking whether an email is registered). Some
+        // older self-hosted instances still return an explicit error message.
+        const isDuplicateEmail =
+          (authError?.message?.toLowerCase().includes('already registered')) ||
+          (authData?.user != null && (authData.user.identities?.length ?? 1) === 0);
 
-        // Supabase returns identities: [] when the email is already registered
-        // (security-safe duplicate detection). Recover by signing in so we can
-        // complete the public profile setup that failed on the first attempt.
-        const userAlreadyExisted = (authData.user.identities?.length ?? 1) === 0;
-        let resolvedUserId = authData.user.id;
-        if (userAlreadyExisted) {
+        let userId: string;
+
+        if (isDuplicateEmail) {
+          // An auth account already exists but the public profile may be
+          // incomplete. Sign in to recover the session.
           const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+
           if (signInError) {
-            throw new Error('This email is already registered. Please sign in instead, or use the correct password.');
+            // Email confirmation is enabled – the user just needs to verify.
+            if (signInError.message?.toLowerCase().includes('not confirmed') ||
+                signInError.message?.toLowerCase().includes('email')) {
+              throw new Error('Please check your inbox and confirm your email address before signing in.');
+            }
+            throw new Error('An account with this email already exists. Please sign in with your password.');
           }
-          // Check if the public profile is already complete
+
+          if (!signInData.user) throw new Error('Sign-in failed unexpectedly.');
+
+          // If the profile is complete (has a company), just log in.
           const { data: existingProfile } = await supabase
             .from('users')
             .select('*')
-            .eq('email', email)
+            .eq('id', signInData.user.id)
             .single();
-          if (existingProfile) {
+
+          if (existingProfile?.company_id) {
             onLogin(existingProfile as User);
             return;
           }
-          // Profile is missing – fall through with the signed-in user id to
-          // create the public profile below.
-          if (!signInData.user) throw new Error('Sign-in after duplicate detection failed');
-          resolvedUserId = signInData.user.id;
+
+          // Profile is missing or has no company – fall through to create it.
+          userId = signInData.user.id;
+        } else if (authError) {
+          throw authError;
+        } else if (!authData?.user) {
+          throw new Error('Signup failed – please try again.');
+        } else {
+          userId = authData.user.id;
         }
 
-        const userId = resolvedUserId;
-        let companyId = invitation?.company_id;
+        // 2. Atomically create the company + public profile via a
+        //    SECURITY DEFINER RPC so that RLS and session state cannot
+        //    interfere. The function is idempotent – safe to call on retry.
+        const { error: regError } = await supabase.rpc('register_with_company', {
+          p_user_id:      userId,
+          p_name:         name || email.split('@')[0],
+          p_email:        email,
+          p_company_name: (!invitation?.company_id && (invitation?.role === 'admin' || !invitation))
+                            ? companyName
+                            : null,
+          p_role:         invitation?.role || 'admin',
+          p_company_id:   invitation?.company_id || null,
+        });
 
-        // 2. Create company if it's a new company invitation
-        if (!companyId && (invitation?.role === 'admin' || !invitation)) {
-          const { data: companyData, error: companyError } = await supabase
-            .from('companies')
-            .insert([{ name: companyName }])
-            .select()
-            .single();
-
-          if (companyError) throw companyError;
-          companyId = companyData.id;
+        if (regError) {
+          console.error('Registration error:', regError);
+          throw new Error(`Registration failed: ${regError.message}`);
         }
 
-        // 3. Create profile in public.users
-        console.log('Attempting to create profile for:', userId, 'with role:', invitation?.role || 'admin', 'and companyId:', companyId);
-        const { error: profileError } = await supabase
-          .from('users')
-          .insert([{ 
-            id: userId,
-            name: name || email.split('@')[0], 
-            email, 
-            role: invitation?.role || 'admin',
-            company_id: companyId || null
-          }]);
-
-        if (profileError) {
-          console.error('Profile creation error:', profileError);
-          throw new Error(`Profile creation failed: ${profileError.message}`);
-        }
-        
-        // 4. Mark invitation as used
+        // 3. Mark invitation as used
         if (invitation) {
           await supabase
             .from('invitations')
