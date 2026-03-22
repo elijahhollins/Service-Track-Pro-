@@ -23,7 +23,8 @@ import {
   Shield,
   Link as LinkIcon,
   ExternalLink,
-  Upload
+  Upload,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice, InvoiceSettings } from './types';
@@ -700,7 +701,9 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [isAddingLog, setIsAddingLog] = useState(false);
+  const [editingLog, setEditingLog] = useState<WorkLog | null>(null);
   const [isViewingInvoice, setIsViewingInvoice] = useState(false);
+  const [isEditingJob, setIsEditingJob] = useState(false);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -769,6 +772,16 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
     fetchJob();
   };
 
+  const handleDeleteInvoice = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this invoice?')) return;
+    const { error } = await supabase.from('invoices').delete().eq('id', id);
+    if (error) {
+      alert('Failed to delete invoice: ' + error.message);
+      return;
+    }
+    fetchInvoices();
+  };
+
   const handleRepeatLog = async (log: WorkLog) => {
     const newLog = {
       job_id: jobId,
@@ -800,6 +813,15 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
           <p className="text-slate-500 text-lg">{job.customer_name} • {job.address}</p>
         </div>
         <div className="flex gap-3">
+          {user.role === 'admin' && (
+            <button
+              onClick={() => setIsEditingJob(true)}
+              className="btn-secondary flex items-center gap-2"
+            >
+              <Pencil className="w-4 h-4" />
+              Edit Job
+            </button>
+          )}
           {user.role === 'admin' && (
             <button 
               onClick={() => setIsViewingInvoice(true)}
@@ -845,6 +867,13 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    <button 
+                      onClick={() => setEditingLog(log)}
+                      className="p-2 text-slate-400 hover:text-brand hover:bg-white rounded-lg transition-all"
+                      title="Edit Log"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
                     <button 
                       onClick={() => handleRepeatLog(log)}
                       className="p-2 text-slate-400 hover:text-slate-900 hover:bg-white rounded-lg transition-all"
@@ -938,15 +967,27 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                   </div>
                   <div className="flex justify-between items-center mt-4">
                     <p className="text-lg font-black font-mono text-slate-900">${invoice.grand_total.toFixed(2)}</p>
-                    <button 
-                      onClick={() => {
-                        setSelectedInvoice(invoice);
-                        setIsViewingInvoice(true);
-                      }}
-                      className="p-2 text-slate-400 hover:text-brand hover:bg-slate-50 rounded-lg transition-colors"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </button>
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => {
+                          setSelectedInvoice(invoice);
+                          setIsViewingInvoice(true);
+                        }}
+                        className="p-2 text-slate-400 hover:text-brand hover:bg-slate-50 rounded-lg transition-colors"
+                        title="View Invoice"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </button>
+                      {user.role === 'admin' && (
+                        <button
+                          onClick={() => handleDeleteInvoice(invoice.id!)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete Invoice"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))
@@ -970,6 +1011,21 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             }} 
           />
         )}
+        {editingLog && (
+          <WorkLogForm
+            jobId={jobId}
+            employees={employees}
+            equipment={equipment}
+            materials={materials}
+            templates={templates}
+            existingLog={editingLog}
+            onClose={() => setEditingLog(null)}
+            onSave={() => {
+              setEditingLog(null);
+              fetchJob();
+            }}
+          />
+        )}
         {isViewingInvoice && (
           <InvoiceView 
             job={job} 
@@ -987,29 +1043,40 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             }}
           />
         )}
+        {isEditingJob && (
+          <EditJobModal
+            job={job}
+            onClose={() => setIsEditingJob(false)}
+            onSave={() => {
+              setIsEditingJob(false);
+              fetchJob();
+            }}
+          />
+        )}
       </AnimatePresence>
     </div>
   );
 };
 
-const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave }: { 
+const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave, existingLog }: { 
   jobId: number, 
   employees: Employee[], 
   equipment: Equipment[], 
   materials: Material[],
   templates: Template[],
   onClose: () => void, 
-  onSave: () => void 
+  onSave: () => void,
+  existingLog?: WorkLog,
 }) => {
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [notes, setNotes] = useState('');
+  const [date, setDate] = useState(existingLog?.date ?? new Date().toISOString().split('T')[0]);
+  const [notes, setNotes] = useState(existingLog?.notes ?? '');
   const [matchHours, setMatchHours] = useState(true);
   const [crewHours, setCrewHours] = useState(8);
   const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(false);
   
-  const [selectedEmployees, setSelectedEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>([]);
-  const [selectedEquipment, setSelectedEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>([]);
-  const [selectedMaterials, setSelectedMaterials] = useState<{ materialId?: number; name: string; quantity: number; unitPrice: number }[]>([]);
+  const [selectedEmployees, setSelectedEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>(existingLog?.data.employees ?? []);
+  const [selectedEquipment, setSelectedEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>(existingLog?.data.equipment ?? []);
+  const [selectedMaterials, setSelectedMaterials] = useState<{ materialId?: number; name: string; quantity: number; unitPrice: number }[]>(existingLog?.data.materials ?? []);
 
   const applyTemplate = (template: Template) => {
     setSelectedEmployees(template.data.employees);
@@ -1048,11 +1115,18 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
       materials: selectedMaterials
     };
     
-    const { error } = await supabase
-      .from('work_logs')
-      .insert([{ job_id: jobId, date, notes, data: logData }]);
-      
-    if (!error) onSave();
+    if (existingLog?.id) {
+      const { error } = await supabase
+        .from('work_logs')
+        .update({ date, notes, data: logData })
+        .eq('id', existingLog.id);
+      if (!error) onSave();
+    } else {
+      const { error } = await supabase
+        .from('work_logs')
+        .insert([{ job_id: jobId, date, notes, data: logData }]);
+      if (!error) onSave();
+    }
   };
 
   return (
@@ -1065,8 +1139,8 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
       >
         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
           <div>
-            <h3 className="text-2xl font-bold text-slate-900 tracking-tight font-display">Daily Work Log</h3>
-            <p className="text-slate-500 text-sm">Record crew, equipment, and materials for the day.</p>
+            <h3 className="text-2xl font-bold text-slate-900 tracking-tight font-display">{existingLog ? 'Edit Work Log' : 'Daily Work Log'}</h3>
+            <p className="text-slate-500 text-sm">{existingLog ? 'Update crew, equipment, and materials for this day.' : 'Record crew, equipment, and materials for the day.'}</p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
             <Plus className="w-6 h-6 rotate-45" />
@@ -1315,9 +1389,150 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
           </div>
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-            <button type="button" onClick={handleSubmit} className="btn-primary px-8">Save Work Log</button>
+            <button type="button" onClick={handleSubmit} className="btn-primary px-8">{existingLog ? 'Update Work Log' : 'Save Work Log'}</button>
           </div>
         </div>
+      </motion.div>
+    </div>
+  );
+};
+
+// ── Edit Job Modal ────────────────────────────────────────────────────────
+const EditJobModal = ({ job, onClose, onSave }: { job: Job; onClose: () => void; onSave: () => void }) => {
+  const [form, setForm] = useState<Partial<Job>>({
+    customer_name: job.customer_name,
+    job_name: job.job_name,
+    job_number: job.job_number,
+    address: job.address,
+    start_date: job.start_date,
+    end_date: job.end_date ?? '',
+    status: job.status,
+    notes: job.notes,
+  });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSaving(true);
+    const { error } = await supabase
+      .from('jobs')
+      .update({
+        customer_name: form.customer_name,
+        job_name: form.job_name,
+        job_number: form.job_number,
+        address: form.address,
+        start_date: form.start_date,
+        end_date: form.end_date || null,
+        status: form.status,
+        notes: form.notes,
+      })
+      .eq('id', job.id!);
+    setIsSaving(false);
+    if (!error) onSave();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="bg-white rounded-3xl w-full max-w-xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col"
+      >
+        <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
+          <div>
+            <h3 className="text-2xl font-bold font-display text-slate-900">Edit Project</h3>
+            <p className="text-slate-500 text-sm">Update the job details below.</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+            <X className="w-6 h-6 text-slate-400" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-8 space-y-6 flex-1 overflow-y-auto min-h-0">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Customer / Company</label>
+                <input
+                  required
+                  className="input-field text-lg"
+                  value={form.customer_name ?? ''}
+                  onChange={e => setForm({ ...form, customer_name: e.target.value })}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Project Name</label>
+                <input
+                  required
+                  className="input-field text-lg"
+                  value={form.job_name ?? ''}
+                  onChange={e => setForm({ ...form, job_name: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Job Number</label>
+                <input
+                  className="input-field font-mono"
+                  value={form.job_number ?? ''}
+                  onChange={e => setForm({ ...form, job_number: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Status</label>
+                <select
+                  className="input-field"
+                  value={form.status ?? 'active'}
+                  onChange={e => setForm({ ...form, status: e.target.value as 'active' | 'completed' })}
+                >
+                  <option value="active">Active</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Start Date</label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={form.start_date ?? ''}
+                  onChange={e => setForm({ ...form, start_date: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">End Date</label>
+                <input
+                  type="date"
+                  className="input-field"
+                  value={form.end_date ?? ''}
+                  onChange={e => setForm({ ...form, end_date: e.target.value })}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Site Address</label>
+                <input
+                  className="input-field"
+                  value={form.address ?? ''}
+                  onChange={e => setForm({ ...form, address: e.target.value })}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Notes</label>
+                <textarea
+                  className="input-field min-h-[80px] resize-none"
+                  value={form.notes ?? ''}
+                  onChange={e => setForm({ ...form, notes: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="pt-4 flex gap-4">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1 py-4" disabled={isSaving}>
+              Cancel
+            </button>
+            <button type="submit" className="btn-primary flex-1 py-4 text-lg shadow-xl shadow-brand/20 disabled:opacity-50" disabled={isSaving}>
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </form>
       </motion.div>
     </div>
   );
@@ -1356,6 +1571,12 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   invoiceSettings?: InvoiceSettings | null,
 }) => {
   const [isSaving, setIsSaving] = useState(false);
+  const [invoiceStatus, setInvoiceStatus] = useState<Invoice['status']>(invoice?.status ?? 'draft');
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+
+  useEffect(() => {
+    setInvoiceStatus(invoice?.status ?? 'draft');
+  }, [invoice?.status]);
 
   const branding = invoiceSettings ?? DEFAULT_INVOICE_SETTINGS;
   
@@ -1629,6 +1850,22 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     }
   };
 
+  const handleUpdateStatus = async (newStatus: Invoice['status']) => {
+    if (!invoice?.id) return;
+    setIsUpdatingStatus(true);
+    const { error } = await supabase
+      .from('invoices')
+      .update({ status: newStatus })
+      .eq('id', invoice.id);
+    setIsUpdatingStatus(false);
+    if (error) {
+      alert('Failed to update invoice status: ' + error.message);
+      return;
+    }
+    setInvoiceStatus(newStatus);
+    if (onSave) onSave();
+  };
+
   return (
     <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-50 flex items-center justify-center p-0 md:p-4 overflow-auto">
       <div className="w-full max-w-5xl min-h-screen md:min-h-0 py-0 md:py-12">
@@ -1648,6 +1885,18 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
               >
                 <Check className="w-4 h-4 md:w-5 md:h-5" /> {isSaving ? 'Saving...' : 'Save to App'}
               </button>
+            )}
+            {invoice && (
+              <select
+                value={invoiceStatus}
+                disabled={isUpdatingStatus}
+                onChange={e => handleUpdateStatus(e.target.value as Invoice['status'])}
+                className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 cursor-pointer disabled:opacity-50"
+              >
+                <option value="draft" className="text-slate-900 bg-white">Draft</option>
+                <option value="sent" className="text-slate-900 bg-white">Sent</option>
+                <option value="paid" className="text-slate-900 bg-white">Paid</option>
+              </select>
             )}
             <button onClick={handleDownloadPDF} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20">
               <Download className="w-4 h-4 md:w-5 md:h-5" /> PDF
