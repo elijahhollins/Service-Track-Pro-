@@ -323,7 +323,7 @@ CREATE TABLE IF NOT EXISTS materials (
   id          BIGSERIAL PRIMARY KEY,
   company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   name        TEXT NOT NULL DEFAULT '',
-  unit_price  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  unit_price  NUMERIC(10,2) DEFAULT NULL,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 

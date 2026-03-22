@@ -24,7 +24,8 @@ import {
   Link as LinkIcon,
   ExternalLink,
   Upload,
-  Pencil
+  Pencil,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice, InvoiceSettings } from './types';
@@ -745,25 +746,25 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
     }
   };
 
+  const fetchMetadata = async () => {
+    const [empRes, eqRes, matRes, tempRes, settingsRes] = await Promise.all([
+      supabase.from('employees').select('*').eq('company_id', user.company_id),
+      supabase.from('equipment').select('*').eq('company_id', user.company_id),
+      supabase.from('materials').select('*').eq('company_id', user.company_id),
+      supabase.from('templates').select('*').eq('company_id', user.company_id),
+      supabase.from('invoice_settings').select('*').eq('company_id', user.company_id).maybeSingle(),
+    ]);
+    if (empRes.data) setEmployees(empRes.data);
+    if (eqRes.data) setEquipment(eqRes.data);
+    if (matRes.data) setMaterials(matRes.data);
+    if (tempRes.data) setTemplates(tempRes.data);
+    if (settingsRes.data) setInvoiceSettings(settingsRes.data);
+  };
+
   useEffect(() => {
     fetchJob();
     fetchInvoices();
-    const fetchData = async () => {
-      const [empRes, eqRes, matRes, tempRes, settingsRes] = await Promise.all([
-        supabase.from('employees').select('*').eq('company_id', user.company_id),
-        supabase.from('equipment').select('*').eq('company_id', user.company_id),
-        supabase.from('materials').select('*').eq('company_id', user.company_id),
-        supabase.from('templates').select('*').eq('company_id', user.company_id),
-        supabase.from('invoice_settings').select('*').eq('company_id', user.company_id).maybeSingle(),
-      ]);
-      
-      if (empRes.data) setEmployees(empRes.data);
-      if (eqRes.data) setEquipment(eqRes.data);
-      if (matRes.data) setMaterials(matRes.data);
-      if (tempRes.data) setTemplates(tempRes.data);
-      if (settingsRes.data) setInvoiceSettings(settingsRes.data);
-    };
-    fetchData();
+    fetchMetadata();
   }, [jobId]);
 
   const handleDeleteLog = async (id: number) => {
@@ -1004,6 +1005,8 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             equipment={equipment} 
             materials={materials}
             templates={templates}
+            user={user}
+            onMaterialAdded={fetchMetadata}
             onClose={() => setIsAddingLog(false)} 
             onSave={() => {
               setIsAddingLog(false);
@@ -1019,6 +1022,8 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
             materials={materials}
             templates={templates}
             existingLog={editingLog}
+            user={user}
+            onMaterialAdded={fetchMetadata}
             onClose={() => setEditingLog(null)}
             onSave={() => {
               setEditingLog(null);
@@ -1058,7 +1063,7 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   );
 };
 
-const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave, existingLog }: { 
+const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClose, onSave, existingLog, user, onMaterialAdded }: { 
   jobId: number, 
   employees: Employee[], 
   equipment: Equipment[], 
@@ -1067,12 +1072,15 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
   onClose: () => void, 
   onSave: () => void,
   existingLog?: WorkLog,
+  user: User,
+  onMaterialAdded?: () => void,
 }) => {
   const [date, setDate] = useState(existingLog?.date ?? new Date().toISOString().split('T')[0]);
   const [notes, setNotes] = useState(existingLog?.notes ?? '');
   const [matchHours, setMatchHours] = useState(true);
   const [crewHours, setCrewHours] = useState(8);
   const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(false);
+  const [customMaterialName, setCustomMaterialName] = useState('');
   
   const [selectedEmployees, setSelectedEmployees] = useState<{ employeeId: number; hours: number; rate: number }[]>(existingLog?.data.employees ?? []);
   const [selectedEquipment, setSelectedEquipment] = useState<{ equipmentId: number; hours: number; rate: number }[]>(existingLog?.data.equipment ?? []);
@@ -1097,7 +1105,23 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
   };
 
   const handleAddMaterial = (mat: Material) => {
-    setSelectedMaterials([...selectedMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
+    setSelectedMaterials([...selectedMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price ?? 0 }]);
+  };
+
+  const handleAddCustomMaterial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = customMaterialName.trim();
+    if (!name || !user.company_id) return;
+    const { data, error } = await supabase
+      .from('materials')
+      .insert([{ company_id: user.company_id, name, unit_price: null }])
+      .select()
+      .single();
+    if (error) { alert(`Unable to save new material to database: ${error.message}`); return; }
+    setSelectedMaterials(prev => [...prev, { materialId: (data as Material).id, name, quantity: 1, unitPrice: 0 }]);
+    setCustomMaterialName('');
+    setIsMaterialMenuOpen(false);
+    onMaterialAdded?.();
   };
 
   useEffect(() => {
@@ -1316,22 +1340,51 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           exit={{ opacity: 0, y: 10 }}
-                          className="absolute right-0 top-full mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-20 max-h-64 overflow-auto"
+                          className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-20 overflow-hidden"
                         >
-                          {materials.map(m => (
-                            <button 
-                              key={m.id}
-                              type="button"
-                              onClick={() => {
-                                handleAddMaterial(m);
-                                setIsMaterialMenuOpen(false);
-                              }}
-                              className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-b border-slate-100 last:border-none"
-                            >
-                              <p className="font-medium">{m.name}</p>
-                              <p className="text-[10px] text-slate-400">${m.unit_price} / unit</p>
-                            </button>
-                          ))}
+                          <div className="max-h-52 overflow-auto">
+                            {materials.map(m => (
+                              <button 
+                                key={m.id}
+                                type="button"
+                                onClick={() => {
+                                  handleAddMaterial(m);
+                                  setIsMaterialMenuOpen(false);
+                                }}
+                                className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-b border-slate-100 last:border-none"
+                              >
+                                <p className="font-medium flex items-center gap-1.5">
+                                  {m.name}
+                                  {m.unit_price === null && <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" title="Price not yet set" />}
+                                </p>
+                                <p className="text-[10px] text-slate-400">
+                                  {m.unit_price === null ? <span className="text-amber-500 font-bold">Price TBD</span> : `$${m.unit_price} / unit`}
+                                </p>
+                              </button>
+                            ))}
+                            {materials.length === 0 && (
+                              <p className="px-4 py-3 text-xs text-slate-400">No materials in list yet.</p>
+                            )}
+                          </div>
+                          <div className="border-t border-slate-200 bg-slate-50 px-3 py-2">
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1.5">Add Unlisted Material</p>
+                            <form onSubmit={handleAddCustomMaterial} className="flex gap-1.5">
+                              <input
+                                type="text"
+                                placeholder="Material name..."
+                                className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-emerald-400 bg-white"
+                                value={customMaterialName}
+                                onChange={e => setCustomMaterialName(e.target.value)}
+                              />
+                              <button
+                                type="submit"
+                                className="text-xs font-bold text-white bg-emerald-500 px-2 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
+                                title="Add unlisted material"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </form>
+                          </div>
                         </motion.div>
                       </>
                     )}
@@ -1339,11 +1392,19 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {selectedMaterials.map((sm, idx) => (
-                  <div key={idx} className="flex items-center gap-4 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                {selectedMaterials.map((sm, idx) => {
+                  const sourcemat = sm.materialId !== undefined ? materials.find(m => m.id === sm.materialId) : undefined;
+                  const needsPrice = sourcemat ? sourcemat.unit_price === null : false;
+                  return (
+                  <div key={idx} className={`flex items-center gap-4 p-4 rounded-xl border ${needsPrice ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100'}`}>
                     <div className="flex-1">
-                      <p className="font-bold text-sm">{sm.name}</p>
-                      <p className="text-[10px] text-slate-400 font-mono">${sm.unitPrice} / unit</p>
+                      <p className="font-bold text-sm flex items-center gap-1.5">
+                        {sm.name}
+                        {needsPrice && <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" title="Price not yet set — cost will show as $0" />}
+                      </p>
+                      <p className={`text-[10px] font-mono ${needsPrice ? 'text-amber-500 font-bold' : 'text-slate-400'}`}>
+                        {needsPrice ? 'Price TBD — cost: $0.00' : `$${sm.unitPrice} / unit`}
+                      </p>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-slate-400">Qty</span>
@@ -1366,7 +1427,8 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           </div>
@@ -2054,6 +2116,8 @@ const Settings = ({ user }: { user: User }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingInvoiceSettings, setIsSavingInvoiceSettings] = useState(false);
   const [invoiceSettingsSaved, setInvoiceSettingsSaved] = useState(false);
+  const [editingPriceId, setEditingPriceId] = useState<number | null>(null);
+  const [editingPriceValue, setEditingPriceValue] = useState('');
 
   const [invoiceSettings, setInvoiceSettings] = useState<Omit<InvoiceSettings, 'id'>>({
     company_id: user.company_id!,
@@ -2106,7 +2170,7 @@ const Settings = ({ user }: { user: User }) => {
 
   const [newEmployee, setNewEmployee] = useState<Partial<Employee>>({ name: '', role: '', hourly_rate: 0, company_id: user.company_id });
   const [newEquipment, setNewEquipment] = useState<Partial<Equipment>>({ name: '', hourly_rate: 0, company_id: user.company_id });
-  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: 0, company_id: user.company_id });
+  const [newMaterial, setNewMaterial] = useState<Partial<Material>>({ name: '', unit_price: null, company_id: user.company_id });
 
   const handleSaveInvoiceSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2198,7 +2262,7 @@ const Settings = ({ user }: { user: User }) => {
   const handleAddMaterialToPending = (e: React.FormEvent) => {
     e.preventDefault();
     setPendingMaterials(prev => [...prev, { ...newMaterial, company_id: user.company_id }]);
-    setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
+    setNewMaterial({ name: '', unit_price: null, company_id: user.company_id });
   };
 
   const handleSaveAllMaterials = async () => {
@@ -2216,7 +2280,7 @@ const Settings = ({ user }: { user: User }) => {
         return;
       }
       setPendingMaterials([]);
-      setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id });
+      setNewMaterial({ name: '', unit_price: null, company_id: user.company_id });
       setIsAddingMaterial(false);
       fetchAll();
     } catch (err: any) {
@@ -2315,6 +2379,16 @@ const Settings = ({ user }: { user: User }) => {
     fetchAll();
   };
 
+  const handleSetMaterialPrice = async (id: number, priceStr: string) => {
+    const price = parseFloat(priceStr);
+    if (isNaN(price) || price < 0) { alert('Please enter a valid price (must be a positive number, e.g. 12.50).'); return; }
+    const { error } = await supabase.from('materials').update({ unit_price: price }).eq('id', id).eq('company_id', user.company_id);
+    if (error) { alert(`Failed to update price: ${error.message}`); return; }
+    setEditingPriceId(null);
+    setEditingPriceValue('');
+    fetchAll();
+  };
+
   const handleSaveTemplate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user.company_id) {
@@ -2373,12 +2447,14 @@ const Settings = ({ user }: { user: User }) => {
   };
 
   const handleAddTemplateMaterial = (mat: Material) => {
-    setTemplateMaterials([...templateMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price }]);
+    setTemplateMaterials([...templateMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price ?? 0 }]);
   };
 
   const filteredEmployees = employees.filter(e => e.name.toLowerCase().includes(searchEmployees.toLowerCase()) || e.role?.toLowerCase().includes(searchEmployees.toLowerCase()));
   const filteredEquipment = equipment.filter(e => e.name.toLowerCase().includes(searchEquipment.toLowerCase()));
   const filteredMaterials = materials.filter(m => m.name.toLowerCase().includes(searchMaterials.toLowerCase()));
+  const needsPriceMaterials = filteredMaterials.filter(m => m.unit_price === null);
+  const pricedMaterials = filteredMaterials.filter(m => m.unit_price !== null);
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-16">
@@ -2388,7 +2464,7 @@ const Settings = ({ user }: { user: User }) => {
           <p className="text-slate-500 mt-1">
             {user.role === 'admin'
               ? 'Manage your master lists for employees, equipment, materials, and daily log templates.'
-              : 'Manage daily log templates for your crew.'}
+              : 'View the materials price list, request new materials, and manage daily log templates.'}
           </p>
         </div>
         <div className="flex gap-3">
@@ -2518,59 +2594,136 @@ const Settings = ({ user }: { user: User }) => {
           </div>
         </section>
 
-        {/* Materials */}
-        <section className="space-y-6 lg:col-span-2">
-          <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
-              <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-                <Package className="w-5 h-5 text-emerald-500" />
-              </div>
-              Materials Price List
-            </h3>
-            <div className="flex items-center gap-2">
-              <input
-                type="file"
-                accept=".csv,.xlsx,.xls"
-                className="hidden"
-                id="material-import-file"
-                onChange={handleImportSpreadsheet}
-              />
-              <label
-                htmlFor="material-import-file"
-                className="p-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-600 cursor-pointer transition-all"
-                title="Import CSV or Excel"
-              >
-                <Upload className="w-5 h-5" />
-              </label>
-              <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all" title="Add material">
-                <Plus className="w-5 h-5" />
-              </button>
+      </div>
+      )}
+
+      {/* Materials — visible to admin AND foreman */}
+      {(user.role === 'admin' || user.role === 'foreman') && (
+      <section className="space-y-6">
+        <div className="flex justify-between items-center">
+          <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+              <Package className="w-5 h-5 text-emerald-500" />
+            </div>
+            Materials Price List
+            {needsPriceMaterials.length > 0 && (
+              <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                <AlertCircle className="w-3 h-3" />
+                {needsPriceMaterials.length} need{needsPriceMaterials.length === 1 ? 's' : ''} pricing
+              </span>
+            )}
+          </h3>
+          <div className="flex items-center gap-2">
+            {user.role === 'admin' && (
+              <>
+                <input
+                  type="file"
+                  accept=".csv,.xlsx,.xls"
+                  className="hidden"
+                  id="material-import-file"
+                  onChange={handleImportSpreadsheet}
+                />
+                <label
+                  htmlFor="material-import-file"
+                  className="p-2 bg-white border border-slate-200 text-slate-600 rounded-lg hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-600 cursor-pointer transition-all"
+                  title="Import CSV or Excel"
+                >
+                  <Upload className="w-5 h-5" />
+                </label>
+              </>
+            )}
+            <button onClick={() => setIsAddingMaterial(true)} className="p-2 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all" title="Add material">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <input 
+            type="text" 
+            placeholder="Search materials..." 
+            className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
+            value={searchMaterials}
+            onChange={e => setSearchMaterials(e.target.value)}
+          />
+        </div>
+
+        {/* Needs-pricing banner */}
+        {needsPriceMaterials.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-amber-800">
+                {needsPriceMaterials.length} material{needsPriceMaterials.length === 1 ? '' : 's'} need{needsPriceMaterials.length === 1 ? 's' : ''} a price
+              </p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                {user.role === 'admin'
+                  ? 'Click the pencil icon on a card below to set the unit price.'
+                  : 'An admin will set prices for these items.'}
+              </p>
             </div>
           </div>
+        )}
 
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Search materials..." 
-              className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all"
-              value={searchMaterials}
-              onChange={e => setSearchMaterials(e.target.value)}
-            />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredMaterials.map(m => (
-              <div key={m.id} className="card p-4 flex justify-between items-center group hover:border-emerald-500/30 transition-all">
-                <div>
-                  <p className="font-bold text-slate-900">{m.name}</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[...needsPriceMaterials, ...pricedMaterials].map(m => (
+            <div key={m.id} className={`card p-4 flex justify-between items-center group transition-all ${m.unit_price === null ? 'border-amber-200 hover:border-amber-400/50 bg-amber-50/30' : 'hover:border-emerald-500/30'}`}>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-slate-900 truncate">{m.name}</p>
+                {m.unit_price === null ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 uppercase">
+                    <AlertCircle className="w-3 h-3" /> Needs Price
+                  </span>
+                ) : (
                   <p className="text-[10px] text-slate-400 font-bold uppercase">Material Item</p>
-                </div>
-                <div className="text-right flex items-center gap-4">
+                )}
+              </div>
+              <div className="text-right flex items-center gap-3 ml-3 flex-shrink-0">
+                {m.unit_price === null ? (
+                  user.role === 'admin' ? (
+                    editingPriceId === m.id ? (
+                      <form
+                        className="flex items-center gap-1"
+                        onSubmit={e => { e.preventDefault(); handleSetMaterialPrice(m.id!, editingPriceValue); }}
+                      >
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          autoFocus
+                          className="w-20 text-sm border border-emerald-300 rounded px-2 py-1 outline-none font-mono"
+                          placeholder="0.00"
+                          value={editingPriceValue}
+                          onChange={e => setEditingPriceValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Escape') { setEditingPriceId(null); setEditingPriceValue(''); }}}
+                        />
+                        <button type="submit" className="p-1 text-emerald-600 hover:text-emerald-700">
+                          <Check className="w-4 h-4" />
+                        </button>
+                        <button type="button" className="p-1 text-slate-400 hover:text-slate-600" onClick={() => { setEditingPriceId(null); setEditingPriceValue(''); }}>
+                          <X className="w-4 h-4" />
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        className="flex items-center gap-1.5 text-xs text-amber-600 font-bold bg-amber-100 hover:bg-amber-200 px-2 py-1 rounded-lg transition-colors"
+                        onClick={() => { setEditingPriceId(m.id!); setEditingPriceValue(''); }}
+                        title="Set price"
+                      >
+                        <Pencil className="w-3 h-3" /> Set Price
+                      </button>
+                    )
+                  ) : (
+                    <span className="text-xs text-amber-500 font-bold">TBD</span>
+                  )
+                ) : (
                   <div>
                     <p className="font-mono font-bold text-emerald-600">${m.unit_price}</p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase">per unit</p>
                   </div>
+                )}
+                {user.role === 'admin' && editingPriceId !== m.id && (
                   <button 
                     onClick={() => handleDeleteMaterial(m.id!)}
                     className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
@@ -2578,17 +2731,17 @@ const Settings = ({ user }: { user: User }) => {
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
-                </div>
+                )}
               </div>
-            ))}
-            {filteredMaterials.length === 0 && (
-              <div className="lg:col-span-3 py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
-                <p className="text-slate-400 text-sm">No materials found</p>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
+            </div>
+          ))}
+          {filteredMaterials.length === 0 && (
+            <div className="lg:col-span-3 py-12 text-center border-2 border-dashed border-slate-200 rounded-2xl">
+              <p className="text-slate-400 text-sm">No materials found</p>
+            </div>
+          )}
+        </div>
+      </section>
       )}
 
       {/* Invoice Branding — admin only */}
@@ -2850,10 +3003,16 @@ const Settings = ({ user }: { user: User }) => {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded-3xl w-full max-w-md max-h-[90vh] shadow-2xl overflow-hidden flex flex-col">
               <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 flex-shrink-0">
                 <div>
-                  <h3 className="text-xl font-bold font-display">Add Materials</h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Add multiple materials before saving.</p>
+                  <h3 className="text-xl font-bold font-display">
+                    {user.role === 'foreman' ? 'Request New Material' : 'Add Materials'}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {user.role === 'foreman'
+                      ? 'Enter the material name. An admin will set the price later.'
+                      : 'Add multiple materials before saving. Price is optional — leave blank to set later.'}
+                  </p>
                 </div>
-                <button onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id }); }}><X className="w-6 h-6 text-slate-400" /></button>
+                <button onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: null, company_id: user.company_id }); }}><X className="w-6 h-6 text-slate-400" /></button>
               </div>
               <div className="p-6 space-y-4 overflow-y-auto min-h-0 flex-1">
                 {pendingMaterials.length > 0 && (
@@ -2862,7 +3021,11 @@ const Settings = ({ user }: { user: User }) => {
                     {pendingMaterials.map((mat, idx) => (
                       <div key={idx} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2 text-sm">
                         <span className="font-medium text-slate-800">{mat.name}</span>
-                        <span className="text-slate-500 text-xs">${mat.unit_price}/unit</span>
+                        <span className="text-slate-500 text-xs flex items-center gap-1">
+                          {mat.unit_price === null
+                            ? <><AlertCircle className="w-3 h-3 text-amber-400" /> Price TBD</>
+                            : `$${mat.unit_price}/unit`}
+                        </span>
                         <button type="button" onClick={() => setPendingMaterials(prev => prev.filter((_, i) => i !== idx))} className="ml-2 text-slate-400 hover:text-red-500"><X className="w-4 h-4" /></button>
                       </div>
                     ))}
@@ -2873,17 +3036,29 @@ const Settings = ({ user }: { user: User }) => {
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Material Name</label>
                     <input required className="input-field" placeholder="e.g. 2 inch PVC Conduit" value={newMaterial.name ?? ''} onChange={e => setNewMaterial({...newMaterial, name: e.target.value})} />
                   </div>
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Unit Price ($)</label>
-                    <input type="number" step="0.01" required className="input-field" placeholder="0.00" value={newMaterial.unit_price ?? ''} onChange={e => setNewMaterial({...newMaterial, unit_price: Number(e.target.value)})} />
-                  </div>
+                  {user.role === 'admin' && (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">
+                        Unit Price ($) <span className="text-slate-300 normal-case font-normal">— optional</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="input-field"
+                        placeholder="Leave blank to set later"
+                        value={newMaterial.unit_price ?? ''}
+                        onChange={e => setNewMaterial({...newMaterial, unit_price: e.target.value === '' ? null : Number(e.target.value)})}
+                      />
+                    </div>
+                  )}
                   <button type="submit" className="btn-secondary w-full flex items-center justify-center gap-2">
                     <Plus className="w-4 h-4" /> Add to List
                   </button>
                 </form>
               </div>
               <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
-                <button type="button" disabled={isSaving} onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: 0, company_id: user.company_id }); }} className="btn-secondary flex-1">Cancel</button>
+                <button type="button" disabled={isSaving} onClick={() => { setIsAddingMaterial(false); setPendingMaterials([]); setNewMaterial({ name: '', unit_price: null, company_id: user.company_id }); }} className="btn-secondary flex-1">Cancel</button>
                 <button type="button" disabled={isSaving || pendingMaterials.length === 0} onClick={handleSaveAllMaterials} className="btn-primary flex-1">
                   {isSaving ? 'Saving...' : `Save ${pendingMaterials.length > 0 ? `(${pendingMaterials.length}) ` : ''}Material${pendingMaterials.length !== 1 ? 's' : ''}`}
                 </button>
