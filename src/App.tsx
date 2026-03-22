@@ -1941,9 +1941,9 @@ const Settings = ({ user }: { user: User }) => {
         }
         const firstRow = result.data[0] ?? {};
         const nameKey = Object.keys(firstRow).find(k => /name/i.test(k));
-        const priceKey = Object.keys(firstRow).find(k => /price|cost|rate|unit/i.test(k));
+        const priceKey = Object.keys(firstRow).find(k => /price|cost|rate/i.test(k));
         if (!nameKey || !priceKey) {
-          alert('Could not find required columns in the CSV.\nExpected a column matching "name" and a column matching "price", "cost", "rate", or "unit".');
+          alert('Could not find required columns in the CSV.\nExpected a column matching "name" and a column matching "price", "cost", or "rate".');
           return;
         }
         for (const row of result.data) {
@@ -1961,9 +1961,9 @@ const Settings = ({ user }: { user: User }) => {
         }
         const headers = rows[0].map(h => String(h ?? '').toLowerCase().trim());
         const nameIdx = headers.findIndex(h => /name/.test(h));
-        const priceIdx = headers.findIndex(h => /price|cost|rate|unit/.test(h));
+        const priceIdx = headers.findIndex(h => /price|cost|rate/.test(h));
         if (nameIdx === -1 || priceIdx === -1) {
-          alert('Could not find required columns in the spreadsheet.\nExpected a column matching "name" and a column matching "price", "cost", "rate", or "unit".');
+          alert('Could not find required columns in the spreadsheet.\nExpected a column matching "name" and a column matching "price", "cost", or "rate".');
           return;
         }
         for (let i = 1; i < rows.length; i++) {
@@ -1980,7 +1980,7 @@ const Settings = ({ user }: { user: User }) => {
       }
 
       if (parsed.length === 0) {
-        alert('No valid rows found in the file. Ensure the file has columns matching "name" and "price" (or cost/rate/unit) with at least one data row.');
+        alert('No valid rows found in the file. Ensure the file has columns matching "name" and "price" (or cost/rate) with at least one data row.');
         return;
       }
 
