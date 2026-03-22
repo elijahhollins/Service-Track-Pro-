@@ -159,10 +159,33 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             .eq('id', invitation.id);
         }
 
+        // 4. Automatically sign the user in so they land on the right screen.
+        //    When Supabase email-confirmation is disabled, signUp() auto-logs
+        //    the user in before register_with_company() finishes, causing
+        //    fetchProfile() to get an empty result and fall back to a
+        //    role:'admin'/company_id:null placeholder that opens CompanySetup.
+        //    Signing in here and calling onLogin() with the real profile
+        //    overrides that stale fallback.
+        window.history.replaceState({}, document.title, window.location.pathname);
+        const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+        if (!loginError && loginData.user) {
+          const { data: newProfile } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .single();
+          if (newProfile) {
+            onLogin(newProfile as User);
+            return;
+          }
+          // Signed in but profile still missing – surface a clear error.
+          throw new Error('Account created but profile could not be loaded. Please try signing in.');
+        }
+
+        // Email confirmation is required – ask the user to verify first.
         setError('Account created! You can now sign in.');
         setIsSignUp(false);
         setInvitation(null);
-        window.history.replaceState({}, document.title, window.location.pathname);
       } else {
         // Sign in
         const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -3231,15 +3254,14 @@ export default function App() {
     if (!error && data) {
       setUser(data as User);
     } else {
-      console.warn('Profile not found in database, using fallback:', error);
-      // Fallback if profile not found
-      setUser({
-        id: id,
-        name: email.split('@')[0],
-        email: email,
-        role: 'admin',
-        company_id: null
-      });
+      console.warn('Profile not found in database:', error);
+      // Profile doesn't exist yet (e.g. mid-registration race condition).
+      // Don't assume role:'admin' here – that would incorrectly trigger
+      // CompanySetup which calls create_company (an RPC that requires an
+      // existing profile and fails without one).  Instead keep user null so
+      // the Login form is shown; the handleSubmit auto-login path will call
+      // onLogin() with the real profile once registration completes.
+      setUser(null);
     }
     setAuthReady(true);
   };
