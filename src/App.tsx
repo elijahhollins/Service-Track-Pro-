@@ -84,7 +84,33 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
         if (authError) throw authError;
         if (!authData.user) throw new Error('Signup failed');
 
-        const userId = authData.user.id;
+        // Supabase returns identities: [] when the email is already registered
+        // (security-safe duplicate detection). Recover by signing in so we can
+        // complete the public profile setup that failed on the first attempt.
+        const userAlreadyExisted = (authData.user.identities?.length ?? 1) === 0;
+        let resolvedUserId = authData.user.id;
+        if (userAlreadyExisted) {
+          const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+          if (signInError) {
+            throw new Error('This email is already registered. Please sign in instead, or use the correct password.');
+          }
+          // Check if the public profile is already complete
+          const { data: existingProfile } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .single();
+          if (existingProfile) {
+            onLogin(existingProfile as User);
+            return;
+          }
+          // Profile is missing – fall through with the signed-in user id to
+          // create the public profile below.
+          if (!signInData.user) throw new Error('Sign-in after duplicate detection failed');
+          resolvedUserId = signInData.user.id;
+        }
+
+        const userId = resolvedUserId;
         let companyId = invitation?.company_id;
 
         // 2. Create company if it's a new company invitation
@@ -107,7 +133,6 @@ const Login = ({ onLogin }: { onLogin: (user: User) => void }) => {
             id: userId,
             name: name || email.split('@')[0], 
             email, 
-            password, 
             role: invitation?.role || 'admin',
             company_id: companyId || null
           }]);
