@@ -1108,8 +1108,7 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
     setSelectedMaterials([...selectedMaterials, { materialId: mat.id, name: mat.name, quantity: 1, unitPrice: mat.unit_price ?? 0 }]);
   };
 
-  const handleAddCustomMaterial = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddCustomMaterial = async () => {
     const name = customMaterialName.trim();
     if (!name || !user.company_id) return;
     const { data, error } = await supabase
@@ -1342,6 +1341,33 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                           exit={{ opacity: 0, y: 10 }}
                           className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-20 overflow-hidden"
                         >
+                          {/* Add Unlisted Material — always visible at top */}
+                          <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1.5">Add Unlisted Material</p>
+                            <div className="flex gap-1.5">
+                              <input
+                                type="text"
+                                placeholder="Material name..."
+                                className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-emerald-400 bg-white"
+                                value={customMaterialName}
+                                onChange={e => setCustomMaterialName(e.target.value)}
+                                onKeyDown={e => {
+                                  e.stopPropagation();
+                                  if (e.key === 'Enter') { e.preventDefault(); handleAddCustomMaterial(); }
+                                }}
+                                onClick={e => e.stopPropagation()}
+                              />
+                              <button
+                                type="button"
+                                onClick={e => { e.stopPropagation(); handleAddCustomMaterial(); }}
+                                className="text-xs font-bold text-white bg-emerald-500 px-2 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
+                                title="Add unlisted material"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                          {/* Existing materials list */}
                           <div className="max-h-52 overflow-auto">
                             {materials.map(m => (
                               <button 
@@ -1365,25 +1391,6 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                             {materials.length === 0 && (
                               <p className="px-4 py-3 text-xs text-slate-400">No materials in list yet.</p>
                             )}
-                          </div>
-                          <div className="border-t border-slate-200 bg-slate-50 px-3 py-2">
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1.5">Add Unlisted Material</p>
-                            <form onSubmit={handleAddCustomMaterial} className="flex gap-1.5">
-                              <input
-                                type="text"
-                                placeholder="Material name..."
-                                className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-emerald-400 bg-white"
-                                value={customMaterialName}
-                                onChange={e => setCustomMaterialName(e.target.value)}
-                              />
-                              <button
-                                type="submit"
-                                className="text-xs font-bold text-white bg-emerald-500 px-2 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
-                                title="Add unlisted material"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                            </form>
                           </div>
                         </motion.div>
                       </>
