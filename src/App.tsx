@@ -8,6 +8,7 @@ import {
   Settings as SettingsIcon, 
   Plus, 
   ChevronRight, 
+  ChevronDown,
   FileText, 
   Clock,
   ArrowLeft,
@@ -742,6 +743,13 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
   const [materials, setMaterials] = useState<Material[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [invoiceSettings, setInvoiceSettings] = useState<InvoiceSettings | null>(null);
+  const [expandedLogs, setExpandedLogs] = useState<Set<number>>(new Set());
+
+  const toggleLog = (id: number) => setExpandedLogs(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   const fetchJob = async () => {
     const { data: jobData, error: jobError } = await supabase
@@ -887,9 +895,14 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
               <button onClick={() => setIsAddingLog(true)} className="text-slate-900 font-bold mt-2 hover:underline">Add your first day</button>
             </div>
           ) : (
-            job.logs?.map(log => (
+            job.logs?.map(log => {
+              const isExpanded = expandedLogs.has(log.id!);
+              return (
               <div key={log.id} className="card">
-                <div className="p-6 flex justify-between items-center bg-slate-50/50 border-b border-slate-100">
+                <div
+                  className="p-6 flex justify-between items-center bg-slate-50/50 border-b border-slate-100 cursor-pointer hover:bg-slate-100/60 transition-colors"
+                  onClick={e => { if (!(e.target as Element).closest('[data-log-action]')) toggleLog(log.id!); }}
+                >
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-white rounded-lg border border-slate-200 flex items-center justify-center text-slate-900 font-bold">
                       {new Date(log.date).getDate()}
@@ -897,9 +910,35 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                     <div>
                       <h4 className="font-bold text-slate-900">{new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h4>
                       <p className="text-xs text-slate-500 italic">{log.notes || 'No notes'}</p>
+                      {!isExpanded && (
+                        <div className="flex items-center gap-3 mt-1.5">
+                          {log.data.employees.length > 0 && (
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                              <Users className="w-3 h-3" /> {log.data.employees.length} employee{log.data.employees.length !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {log.data.equipment.length > 0 && (
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                              <Truck className="w-3 h-3" /> {log.data.equipment.length} equipment
+                            </span>
+                          )}
+                          {log.data.materials.length > 0 && (
+                            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+                              <Package className="w-3 h-3" /> {log.data.materials.length} material{log.data.materials.length !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2" data-log-action="">
+                    <button 
+                      onClick={() => setEditingLog(log)}
+                      className="p-2 text-slate-400 hover:text-brand hover:bg-white rounded-lg transition-all"
+                      title="Edit Log"
+                    >
+                      <Pencil className="w-5 h-5" />
+                    </button>
                     <button 
                       onClick={() => setEditingLog(log)}
                       className="p-2 text-slate-400 hover:text-brand hover:bg-white rounded-lg transition-all"
@@ -921,8 +960,12 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
+                    <div className="p-2 text-slate-400" aria-label={isExpanded ? 'Collapse log details' : 'Expand log details'}>
+                      {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                    </div>
                   </div>
                 </div>
+                {isExpanded && (
                 <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-8">
                   <div>
                     <h5 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -964,8 +1007,10 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                     </ul>
                   </div>
                 </div>
+                )}
               </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -2166,6 +2211,10 @@ const Settings = ({ user }: { user: User }) => {
   const [searchEquipment, setSearchEquipment] = useState('');
   const [searchMaterials, setSearchMaterials] = useState('');
 
+  const [employeesExpanded, setEmployeesExpanded] = useState(false);
+  const [equipmentExpanded, setEquipmentExpanded] = useState(false);
+  const [materialsExpanded, setMaterialsExpanded] = useState(false);
+
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isAddingEquipment, setIsAddingEquipment] = useState(false);
   const [isAddingMaterial, setIsAddingMaterial] = useState(false);
@@ -2537,17 +2586,29 @@ const Settings = ({ user }: { user: User }) => {
         {/* Employees */}
         <section className="space-y-6">
           <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
-              <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
-                <Users className="w-5 h-5 text-brand" />
-              </div>
-              Employees
-            </h3>
+            <button
+              type="button"
+              onClick={() => setEmployeesExpanded(prev => !prev)}
+              aria-expanded={employeesExpanded}
+              aria-label={employeesExpanded ? 'Collapse employees list' : 'Expand employees list'}
+              className="flex items-center gap-3 text-left group"
+            >
+              <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+                <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                  <Users className="w-5 h-5 text-brand" />
+                </div>
+                Employees
+                <span className="text-sm font-normal text-slate-400">({employees.length})</span>
+              </h3>
+              {employeesExpanded ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
+            </button>
             <button onClick={() => setIsAddingEmployee(true)} className="p-2 bg-brand text-white rounded-lg shadow-lg shadow-brand/20 hover:scale-105 transition-all">
               <Plus className="w-5 h-5" />
             </button>
           </div>
           
+          {employeesExpanded && (
+          <>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input 
@@ -2592,22 +2653,36 @@ const Settings = ({ user }: { user: User }) => {
               </div>
             )}
           </div>
+          </>
+          )}
         </section>
 
         {/* Equipment */}
         <section className="space-y-6">
           <div className="flex justify-between items-center">
-            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
-              <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
-                <Truck className="w-5 h-5 text-orange-500" />
-              </div>
-              Equipment
-            </h3>
+            <button
+              type="button"
+              onClick={() => setEquipmentExpanded(prev => !prev)}
+              aria-expanded={equipmentExpanded}
+              aria-label={equipmentExpanded ? 'Collapse equipment list' : 'Expand equipment list'}
+              className="flex items-center gap-3 text-left group"
+            >
+              <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+                <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center">
+                  <Truck className="w-5 h-5 text-orange-500" />
+                </div>
+                Equipment
+                <span className="text-sm font-normal text-slate-400">({equipment.length})</span>
+              </h3>
+              {equipmentExpanded ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
+            </button>
             <button onClick={() => setIsAddingEquipment(true)} className="p-2 bg-orange-500 text-white rounded-lg shadow-lg shadow-orange-500/20 hover:scale-105 transition-all">
               <Plus className="w-5 h-5" />
             </button>
           </div>
 
+          {equipmentExpanded && (
+          <>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input 
@@ -2649,6 +2724,8 @@ const Settings = ({ user }: { user: User }) => {
               </div>
             )}
           </div>
+          </>
+          )}
         </section>
 
       </div>
@@ -2658,18 +2735,28 @@ const Settings = ({ user }: { user: User }) => {
       {(user.role === 'admin' || user.role === 'foreman') && (
       <section className="space-y-6">
         <div className="flex justify-between items-center">
-          <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
-            <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
-              <Package className="w-5 h-5 text-emerald-500" />
-            </div>
-            Materials Price List
-            {needsPriceMaterials.length > 0 && (
-              <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
-                <AlertCircle className="w-3 h-3" />
-                {needsPriceMaterials.length} need{needsPriceMaterials.length === 1 ? 's' : ''} pricing
-              </span>
-            )}
-          </h3>
+          <button
+            type="button"
+            onClick={() => setMaterialsExpanded(prev => !prev)}
+            aria-expanded={materialsExpanded}
+            aria-label={materialsExpanded ? 'Collapse materials list' : 'Expand materials list'}
+            className="flex items-center gap-3 text-left group"
+          >
+            <h3 className="text-2xl font-bold flex items-center gap-3 text-slate-900 font-display">
+              <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                <Package className="w-5 h-5 text-emerald-500" />
+              </div>
+              Materials Price List
+              <span className="text-sm font-normal text-slate-400">({materials.length})</span>
+              {needsPriceMaterials.length > 0 && (
+                <span className="flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                  <AlertCircle className="w-3 h-3" />
+                  {needsPriceMaterials.length} need{needsPriceMaterials.length === 1 ? 's' : ''} pricing
+                </span>
+              )}
+            </h3>
+            {materialsExpanded ? <ChevronDown className="w-5 h-5 text-slate-400" /> : <ChevronRight className="w-5 h-5 text-slate-400" />}
+          </button>
           <div className="flex items-center gap-2">
             {user.role === 'admin' && (
               <>
@@ -2695,6 +2782,8 @@ const Settings = ({ user }: { user: User }) => {
           </div>
         </div>
 
+        {materialsExpanded && (
+        <>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input 
@@ -2798,6 +2887,8 @@ const Settings = ({ user }: { user: User }) => {
             </div>
           )}
         </div>
+        </>
+        )}
       </section>
       )}
 
