@@ -1745,11 +1745,19 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   }, [invoice?.status]);
 
   const branding = invoiceSettings ?? DEFAULT_INVOICE_SETTINGS;
-  
+
+  // If a material was added to a work log before its price was set (unitPrice stored as 0),
+  // look up the current catalog price so the invoice reflects the price the admin set.
+  const resolveUnitPrice = (m: { materialId?: number; unitPrice: number }): number => {
+    if (m.unitPrice !== 0 || m.materialId === null || m.materialId === undefined) return m.unitPrice;
+    const catalogMaterial = materials.find(mat => mat.id === m.materialId);
+    return catalogMaterial?.unit_price ?? 0;
+  };
+
   // Use saved data if viewing a saved invoice, otherwise calculate from current logs
   const laborTotal = invoice ? invoice.labor_total : (job.logs?.reduce((acc, log) => acc + log.data.employees.reduce((lAcc, e) => lAcc + (e.hours * e.rate), 0), 0) || 0);
   const equipmentTotal = invoice ? invoice.equipment_total : (job.logs?.reduce((acc, log) => acc + log.data.equipment.reduce((eAcc, e) => eAcc + (e.hours * e.rate), 0), 0) || 0);
-  const materialTotal = invoice ? invoice.material_total : (job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * m.unitPrice), 0), 0) || 0);
+  const materialTotal = invoice ? invoice.material_total : (job.logs?.reduce((acc, log) => acc + log.data.materials.reduce((mAcc, m) => mAcc + (m.quantity * resolveUnitPrice(m)), 0), 0) || 0);
   const grandTotal = invoice ? invoice.grand_total : (laborTotal + equipmentTotal + materialTotal);
   
   const displayLogs = invoice ? invoice.data.logs : job.logs;
@@ -1894,7 +1902,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
         rows.push([`Equipment — ${eqName}`, `${e.hours}h`, `$${Number(e.rate).toFixed(2)}`, `$${(e.hours * e.rate).toFixed(2)}`]);
       });
       (log.data.materials || []).forEach((m: any) => {
-        rows.push([`Material — ${m.name}`, `${m.quantity}`, `$${Number(m.unitPrice).toFixed(2)}`, `$${(m.quantity * m.unitPrice).toFixed(2)}`]);
+        const price = invoice ? m.unitPrice : resolveUnitPrice(m);
+        rows.push([`Material — ${m.name}`, `${m.quantity}`, `$${Number(price).toFixed(2)}`, `$${(m.quantity * price).toFixed(2)}`]);
       });
 
       if (rows.length === 0) {
@@ -2008,6 +2017,18 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   const handleSaveInvoice = async () => {
     setIsSaving(true);
     try {
+      // Build logs with resolved unit prices so the saved invoice reflects the current catalog prices
+      const resolvedLogs = (job.logs ?? []).map(log => ({
+        ...log,
+        data: {
+          ...log.data,
+          materials: log.data.materials.map(m => ({
+            ...m,
+            unitPrice: resolveUnitPrice(m),
+          })),
+        },
+      }));
+
       const invoiceData: Partial<Invoice> = {
         company_id: job.company_id,
         job_id: job.id,
@@ -2020,7 +2041,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
         material_total: materialTotal,
         grand_total: grandTotal,
         data: {
-          logs: job.logs,
+          logs: resolvedLogs,
           customer: job.customer_name,
           address: job.address,
           projectName: job.job_name
@@ -2176,14 +2197,17 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
                           <td className="py-4 text-right font-mono font-bold text-slate-900">${(e.hours * e.rate).toFixed(2)}</td>
                         </tr>
                       ))}
-                      {log.data.materials.map((m, idx) => (
-                        <tr key={`mat-${idx}`} className="group">
-                          <td className="py-4 font-medium text-slate-700">Material: {m.name}</td>
-                          <td className="py-4 text-center font-mono text-slate-600">{m.quantity}</td>
-                          <td className="py-4 text-right font-mono text-slate-600">${m.unitPrice.toFixed(2)}</td>
-                          <td className="py-4 text-right font-mono font-bold text-slate-900">${(m.quantity * m.unitPrice).toFixed(2)}</td>
-                        </tr>
-                      ))}
+                      {log.data.materials.map((m, idx) => {
+                        const price = invoice ? m.unitPrice : resolveUnitPrice(m);
+                        return (
+                          <tr key={`mat-${idx}`} className="group">
+                            <td className="py-4 font-medium text-slate-700">Material: {m.name}</td>
+                            <td className="py-4 text-center font-mono text-slate-600">{m.quantity}</td>
+                            <td className="py-4 text-right font-mono text-slate-600">${price.toFixed(2)}</td>
+                            <td className="py-4 text-right font-mono font-bold text-slate-900">${(m.quantity * price).toFixed(2)}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
