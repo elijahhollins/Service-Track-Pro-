@@ -323,9 +323,14 @@ CREATE TABLE IF NOT EXISTS materials (
   id          BIGSERIAL PRIMARY KEY,
   company_id  UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   name        TEXT NOT NULL DEFAULT '',
-  unit_price  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  unit_price  NUMERIC(10,2) DEFAULT NULL,
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Idempotent: make unit_price nullable on existing databases that were
+-- created before the "unlisted materials" feature was added.
+ALTER TABLE materials ALTER COLUMN unit_price DROP NOT NULL;
+ALTER TABLE materials ALTER COLUMN unit_price SET DEFAULT NULL;
 
 ALTER TABLE materials ENABLE ROW LEVEL SECURITY;
 

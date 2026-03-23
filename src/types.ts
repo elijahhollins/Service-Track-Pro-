@@ -23,7 +23,7 @@ export interface Material {
   id?: number;
   company_id: string;
   name: string;
-  unit_price: number;
+  unit_price: number | null;
 }
 
 export interface WorkLogEntry {
