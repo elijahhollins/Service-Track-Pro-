@@ -1341,13 +1341,13 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                           exit={{ opacity: 0, y: 10 }}
                           className="absolute right-0 top-full mt-2 w-72 bg-white border border-slate-200 rounded-xl shadow-xl z-20 overflow-hidden"
                         >
-                          {/* Add Unlisted Material — always visible at top */}
+                          {/* Search / Add Unlisted Material — always visible at top */}
                           <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
-                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1.5">Add Unlisted Material</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide mb-1.5">Search or Add Unlisted Material</p>
                             <div className="flex gap-1.5">
                               <input
                                 type="text"
-                                placeholder="Material name..."
+                                placeholder="Type to search or add..."
                                 className="flex-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-emerald-400 bg-white"
                                 value={customMaterialName}
                                 onChange={e => setCustomMaterialName(e.target.value)}
@@ -1356,42 +1356,54 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
                                   if (e.key === 'Enter') { e.preventDefault(); handleAddCustomMaterial(); }
                                 }}
                                 onClick={e => e.stopPropagation()}
+                                autoFocus
                               />
                               <button
                                 type="button"
                                 onClick={e => { e.stopPropagation(); handleAddCustomMaterial(); }}
-                                className="text-xs font-bold text-white bg-emerald-500 px-2 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1"
-                                title="Add unlisted material"
+                                disabled={!customMaterialName.trim()}
+                                className="text-xs font-bold text-white bg-emerald-500 px-2 py-1.5 rounded-lg hover:bg-emerald-600 transition-colors flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                                title="Add as unlisted material"
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
                             </div>
                           </div>
-                          {/* Existing materials list */}
-                          <div className="max-h-52 overflow-auto">
-                            {materials.map(m => (
-                              <button 
-                                key={m.id}
-                                type="button"
-                                onClick={() => {
-                                  handleAddMaterial(m);
-                                  setIsMaterialMenuOpen(false);
-                                }}
-                                className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-b border-slate-100 last:border-none"
-                              >
-                                <p className="font-medium flex items-center gap-1.5">
-                                  {m.name}
-                                  {m.unit_price === null && <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" title="Price not yet set" />}
-                                </p>
-                                <p className="text-[10px] text-slate-400">
-                                  {m.unit_price === null ? <span className="text-amber-500 font-bold">Price TBD</span> : `$${m.unit_price} / unit`}
-                                </p>
-                              </button>
-                            ))}
-                            {materials.length === 0 && (
-                              <p className="px-4 py-3 text-xs text-slate-400">No materials in list yet.</p>
-                            )}
-                          </div>
+                          {/* Filtered materials list */}
+                          {(() => {
+                            const q = customMaterialName.trim().toLowerCase();
+                            const filtered = q ? materials.filter(m => m.name.toLowerCase().includes(q)) : materials;
+                            return (
+                              <div className="max-h-52 overflow-auto">
+                                {filtered.map(m => (
+                                  <button 
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => {
+                                      handleAddMaterial(m);
+                                      setCustomMaterialName('');
+                                      setIsMaterialMenuOpen(false);
+                                    }}
+                                    className="w-full text-left px-4 py-2 hover:bg-slate-50 text-sm border-b border-slate-100 last:border-none"
+                                  >
+                                    <p className="font-medium flex items-center gap-1.5">
+                                      {m.name}
+                                      {m.unit_price === null && <AlertCircle className="w-3 h-3 text-amber-400 flex-shrink-0" title="Price not yet set" />}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400">
+                                      {m.unit_price === null ? <span className="text-amber-500 font-bold">Price TBD</span> : `$${m.unit_price} / unit`}
+                                    </p>
+                                  </button>
+                                ))}
+                                {materials.length === 0 && (
+                                  <p className="px-4 py-3 text-xs text-slate-400">No materials in list yet.</p>
+                                )}
+                                {materials.length > 0 && filtered.length === 0 && (
+                                  <p className="px-4 py-3 text-xs text-slate-400">No matches — press <kbd className="font-mono bg-slate-100 px-1 rounded">+</kbd> or Enter to add as new.</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </motion.div>
                       </>
                     )}
