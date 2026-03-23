@@ -395,7 +395,7 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
   );
 };
 
-const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, user: User }) => {
+const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (id: number) => void, user: User, onNavigateToSettings: () => void }) => {
   const getInitialJob = (): Partial<Job> => ({
     customer_name: '',
     job_name: '',
@@ -414,6 +414,7 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
   const [searchQuery, setSearchQuery] = useState('');
   const [foremen, setForemen] = useState<User[]>([]);
   const [newJob, setNewJob] = useState<Partial<Job>>(getInitialJob());
+  const [unpricedMaterialCount, setUnpricedMaterialCount] = useState(0);
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -436,9 +437,19 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
       if (!error && data) setForemen(data as User[]);
     };
 
+    const fetchUnpricedMaterials = async () => {
+      const { count } = await supabase
+        .from('materials')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', user.company_id)
+        .is('unit_price', null);
+      setUnpricedMaterialCount(count ?? 0);
+    };
+
     fetchJobs();
     if (user.role === 'admin') {
       fetchForemen();
+      fetchUnpricedMaterials();
     }
   }, [user]);
 
@@ -533,6 +544,27 @@ const Dashboard = ({ onSelectJob, user }: { onSelectJob: (id: number) => void, u
           )}
         </div>
       </div>
+
+      {user.role === 'admin' && unpricedMaterialCount > 0 && (
+        <div className="mb-8 bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-bold text-amber-800">
+              {unpricedMaterialCount} material{unpricedMaterialCount === 1 ? '' : 's'} need{unpricedMaterialCount === 1 ? 's' : ''} a price
+            </p>
+            <p className="text-xs text-amber-600 mt-0.5">
+              Some materials were added without a unit price and will show as $0.00 on invoices until a price is set.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onNavigateToSettings}
+            className="text-xs font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap flex-shrink-0"
+          >
+            Set Prices
+          </button>
+        </div>
+      )}
 
       {filteredJobs.length === 0 ? (
         <div className="p-20 border-2 border-dashed border-slate-200 rounded-3xl text-center">
@@ -3756,7 +3788,7 @@ export default function App() {
         selectedJobId ? (
           <JobDetails jobId={selectedJobId} onBack={() => setSelectedJobId(null)} user={user} />
         ) : (
-          <Dashboard onSelectJob={setSelectedJobId} user={user} />
+          <Dashboard onSelectJob={setSelectedJobId} user={user} onNavigateToSettings={() => { setActiveTab('settings'); }} />
         )
       )}
       {activeTab === 'users' && user.role === 'admin' && <UserManagement user={user} />}
