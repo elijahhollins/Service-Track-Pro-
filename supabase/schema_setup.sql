@@ -327,6 +327,11 @@ CREATE TABLE IF NOT EXISTS materials (
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Idempotent: make unit_price nullable on existing databases that were
+-- created before the "unlisted materials" feature was added.
+ALTER TABLE materials ALTER COLUMN unit_price DROP NOT NULL;
+ALTER TABLE materials ALTER COLUMN unit_price SET DEFAULT NULL;
+
 ALTER TABLE materials ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "materials_select" ON materials;

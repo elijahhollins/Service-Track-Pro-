@@ -1116,7 +1116,13 @@ const WorkLogForm = ({ jobId, employees, equipment, materials, templates, onClos
       .insert([{ company_id: user.company_id, name, unit_price: null }])
       .select()
       .single();
-    if (error) { alert(`Unable to save new material to database: ${error.message}`); return; }
+    if (error) {
+      const migrationHint = error.message.includes('not-null')
+        ? '\n\nPlease run the migration in supabase/materials_price_nullable.sql against your database to allow materials without a price.'
+        : '';
+      alert(`Unable to save new material to database: ${error.message}${migrationHint}`);
+      return;
+    }
     setSelectedMaterials(prev => [...prev, { materialId: (data as Material).id, name, quantity: 1, unitPrice: 0 }]);
     setCustomMaterialName('');
     setIsMaterialMenuOpen(false);
