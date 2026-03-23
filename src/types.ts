@@ -90,6 +90,8 @@ export interface InvoiceSettings {
   company_email: string;
   logo_initials: string;
   payment_terms: string;
+  header_color?: string;
+  accent_color?: string;
 }
 
 export interface Invoice {

@@ -463,6 +463,8 @@ CREATE TABLE IF NOT EXISTS invoice_settings (
   company_email   TEXT NOT NULL DEFAULT 'billing@servicetrackpro.com',
   logo_initials   TEXT NOT NULL DEFAULT 'STP',
   payment_terms   TEXT NOT NULL DEFAULT 'Payment due within 30 days. Checks payable to the company above. Late payments subject to 1.5% monthly finance charge.',
+  header_color    TEXT NOT NULL DEFAULT '#0a142d',
+  accent_color    TEXT NOT NULL DEFAULT '#c49614',
   created_at      TIMESTAMPTZ DEFAULT NOW(),
   updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

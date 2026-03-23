@@ -1722,6 +1722,8 @@ const DEFAULT_INVOICE_SETTINGS: Omit<InvoiceSettings, 'id' | 'company_id'> = {
   company_email: 'billing@servicetrackpro.com',
   logo_initials: 'STP',
   payment_terms: 'Payment due within 30 days. Checks payable to the company above. Late payments subject to 1.5% monthly finance charge.',
+  header_color: '#0a142d',
+  accent_color: '#c49614',
 };
 
 const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, invoice, invoiceSettings }: { 
@@ -1762,7 +1764,31 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     const margin = 14;
     const contentW = pageW - margin * 2;
 
-    const { navyDark, navyMid, gold, goldLight, white, slate100, slate300, slate700, slate900 } = PDF_COLORS;
+    const { white, slate100, slate300, slate700, slate900 } = PDF_COLORS;
+
+    // ── Derive header / accent colours from branding ──────────────────────
+    const hexToRgb = (hex: string): [number, number, number] => {
+      let clean = hex.replace('#', '');
+      // Expand shorthand #RGB → #RRGGBB
+      if (clean.length === 3) {
+        clean = clean.split('').map(c => c + c).join('');
+      }
+      if (!/^[0-9a-fA-F]{6}$/.test(clean)) {
+        return [10, 20, 45]; // fallback to navyDark default
+      }
+      return [
+        parseInt(clean.slice(0, 2), 16),
+        parseInt(clean.slice(2, 4), 16),
+        parseInt(clean.slice(4, 6), 16),
+      ];
+    };
+    const lighten = (rgb: [number, number, number], f: number): [number, number, number] =>
+      rgb.map(c => Math.min(255, Math.round(c + (255 - c) * f))) as [number, number, number];
+
+    const navyDark  = hexToRgb(branding.header_color || '#0a142d');
+    const navyMid   = lighten(navyDark, 0.3);
+    const gold      = hexToRgb(branding.accent_color || '#c49614');
+    const goldLight = lighten(gold, 0.25);
 
     // ── Helper: set fill ─────────────────────────────────────────────────
     const fill  = (c: [number,number,number]) => pdf.setFillColor(...c);
@@ -2074,10 +2100,10 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
 
         <div className="bg-white p-6 md:p-16 rounded-none md:rounded-3xl shadow-2xl text-slate-900 print:shadow-none print:p-0" id="invoice-content">
           {/* Header */}
-          <div className="flex flex-col md:flex-row justify-between items-start border-b-4 border-slate-900 pb-10 mb-12 gap-8">
+          <div className="flex flex-col md:flex-row justify-between items-start border-b-4 pb-10 mb-12 gap-8" style={{ borderColor: branding.header_color || '#0a142d' }}>
             <div>
               <div className="flex items-center gap-4 mb-6">
-                <div className="w-12 h-12 bg-brand rounded-2xl flex items-center justify-center shadow-xl shadow-brand/20 text-white font-black text-sm">
+                <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-xl text-white font-black text-sm" style={{ backgroundColor: branding.accent_color || '#c49614' }}>
                   {branding.logo_initials.slice(0, 4)}
                 </div>
                 <h1 className="text-3xl font-black uppercase tracking-tighter font-display">{branding.company_name}</h1>
@@ -2166,7 +2192,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
           </div>
 
           {/* Totals */}
-          <div className="flex justify-end pt-12 border-t-4 border-slate-900">
+          <div className="flex justify-end pt-12 border-t-4" style={{ borderColor: branding.header_color || '#0a142d' }}>
             <div className="w-full md:w-80 space-y-4">
               <div className="flex justify-between text-base">
                 <span className="text-slate-500 font-medium">Labor Subtotal:</span>
@@ -2182,7 +2208,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
               </div>
               <div className="pt-6 border-t-2 border-slate-100 flex justify-between items-center">
                 <span className="text-2xl font-black uppercase tracking-tighter text-slate-900">Total Due:</span>
-                <span className="text-4xl font-black font-mono text-brand">${grandTotal.toFixed(2)}</span>
+                <span className="text-4xl font-black font-mono" style={{ color: branding.accent_color || '#c49614' }}>${grandTotal.toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -2233,6 +2259,8 @@ const Settings = ({ user }: { user: User }) => {
     company_email: '',
     logo_initials: '',
     payment_terms: '',
+    header_color: '#0a142d',
+    accent_color: '#c49614',
   });
 
   const [newTemplateName, setNewTemplateName] = useState('');
@@ -2964,6 +2992,48 @@ const Settings = ({ user }: { user: User }) => {
                 value={invoiceSettings.payment_terms}
                 onChange={e => setInvoiceSettings({ ...invoiceSettings, payment_terms: e.target.value })}
               />
+            </div>
+          </div>
+
+          <div className="space-y-4 pt-2 border-t border-slate-100">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Color Scheme</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Header Color</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    className="w-10 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5"
+                    value={invoiceSettings.header_color || '#0a142d'}
+                    onChange={e => setInvoiceSettings({ ...invoiceSettings, header_color: e.target.value })}
+                  />
+                  <input
+                    className="input-field flex-1"
+                    placeholder="#0a142d"
+                    value={invoiceSettings.header_color || '#0a142d'}
+                    onChange={e => setInvoiceSettings({ ...invoiceSettings, header_color: e.target.value })}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Background color for the PDF header band and invoice borders.</p>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">Accent Color</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    className="w-10 h-10 rounded-lg border border-slate-200 cursor-pointer p-0.5"
+                    value={invoiceSettings.accent_color || '#c49614'}
+                    onChange={e => setInvoiceSettings({ ...invoiceSettings, accent_color: e.target.value })}
+                  />
+                  <input
+                    className="input-field flex-1"
+                    placeholder="#c49614"
+                    value={invoiceSettings.accent_color || '#c49614'}
+                    onChange={e => setInvoiceSettings({ ...invoiceSettings, accent_color: e.target.value })}
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">Accent color for the logo box, highlights, and total amount.</p>
+              </div>
             </div>
           </div>
 
