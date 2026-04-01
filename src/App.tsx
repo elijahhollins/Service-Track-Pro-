@@ -1771,6 +1771,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     const pageH = pdf.internal.pageSize.getHeight();  // 297
     const margin = 14;
     const contentW = pageW - margin * 2;
+    // Height reserved at the bottom of every page for the totals footer
+    const footerH = 52;
 
     const { white, slate100, slate300, slate700, slate900 } = PDF_COLORS;
 
@@ -1880,7 +1882,8 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
       const logDate = new Date(log.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
       // Section header
-      if (cursorY > pageH - 60) { pdf.addPage(); cursorY = 18; }
+      // Need at least 10 mm for the banner + footerH for the reserved footer zone
+      if (cursorY > pageH - footerH - 10) { pdf.addPage(); cursorY = 18; fill(gold); pdf.rect(0, 0, pageW, 3, 'F'); }
       fill(navyMid); pdf.roundedRect(margin, cursorY, contentW, 10, 2, 2, 'F');
       text(goldLight); pdf.setFontSize(8); pdf.setFont('helvetica', 'bold');
       pdf.text(`Daily Log — ${logDate}`, margin + 4, cursorY + 6.8);
@@ -1912,7 +1915,7 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
 
       autoTable(pdf, {
         startY: cursorY,
-        margin: { left: margin, right: margin },
+        margin: { left: margin, right: margin, bottom: footerH },
         tableWidth: contentW,
         head: [['DESCRIPTION', 'QTY / HRS', 'UNIT RATE', 'AMOUNT']],
         body: rows,
@@ -1950,63 +1953,56 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
     });
 
     // ════════════════════════════════════════════════════════════════════
-    // TOTALS SECTION
+    // TOTALS + FOOTER — drawn on every page so the price is always visible
     // ════════════════════════════════════════════════════════════════════
-    const totalsH = 52;
-    if (cursorY + totalsH > pageH - 25) { pdf.addPage(); cursorY = 18; fill(gold); pdf.rect(0, 0, pageW, 3, 'F'); }
-
-    cursorY += 4;
-    // gold divider line
-    stroke(gold); pdf.setLineWidth(0.8);
-    pdf.line(margin, cursorY, pageW - margin, cursorY);
-    cursorY += 6;
-
-    const totalsX = pageW - margin - 75;
-    const totalsLabelX = totalsX;
-    const totalsValX = pageW - margin;
-
-    const totals = [
-      ['Labor Subtotal', `$${laborTotal.toFixed(2)}`],
-      ['Equipment Subtotal', `$${equipmentTotal.toFixed(2)}`],
-      ['Material Subtotal', `$${materialTotal.toFixed(2)}`],
-    ];
-
-    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
-    totals.forEach(([label, val]) => {
-      text(slate700); pdf.text(label, totalsLabelX, cursorY);
-      text(slate900); pdf.setFont('helvetica', 'bold');
-      pdf.text(val, totalsValX, cursorY, { align: 'right' });
-      pdf.setFont('helvetica', 'normal');
-      cursorY += 8;
-    });
-
-    // Grand Total box
-    cursorY += 2;
-    fill(navyDark); pdf.roundedRect(totalsX - 4, cursorY - 5, 75 + 4, 16, 2, 2, 'F');
-    fill(gold); pdf.roundedRect(totalsX - 4, cursorY - 5, 3.5, 16, 1, 1, 'F');
-    text(white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
-    pdf.text('TOTAL DUE', totalsLabelX + 2, cursorY + 5);
-    text(goldLight); pdf.setFontSize(13);
-    pdf.text(`$${grandTotal.toFixed(2)}`, totalsValX, cursorY + 5.5, { align: 'right' });
-    cursorY += 20;
-
-    // ════════════════════════════════════════════════════════════════════
-    // FOOTER
-    // ════════════════════════════════════════════════════════════════════
-    const footerY = pageH - 22;
-    stroke(slate300); pdf.setLineWidth(0.3);
-    pdf.line(margin, footerY, pageW - margin, footerY);
-    text(slate700); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
-    pdf.text('THANK YOU FOR YOUR BUSINESS', pageW / 2, footerY + 6, { align: 'center' });
-    text(slate300); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
-    pdf.text(
-      branding.payment_terms,
-      pageW / 2, footerY + 12, { align: 'center', maxWidth: contentW }
-    );
-    // page number
     const pageCount = (pdf as any).internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       pdf.setPage(i);
+
+      const baseY = pageH - footerH; // top of the reserved footer zone
+
+      // Gold divider
+      stroke(gold); pdf.setLineWidth(0.8);
+      pdf.line(margin, baseY, pageW - margin, baseY);
+
+      // Left side: subtotals stacked
+      let ty = baseY + 8;
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8);
+      text(slate700); pdf.text('Labor:', margin, ty);
+      text(slate900); pdf.setFont('helvetica', 'bold');
+      pdf.text(`$${laborTotal.toFixed(2)}`, margin + 22, ty);
+      pdf.setFont('helvetica', 'normal');
+      ty += 7;
+      text(slate700); pdf.text('Equipment:', margin, ty);
+      text(slate900); pdf.setFont('helvetica', 'bold');
+      pdf.text(`$${equipmentTotal.toFixed(2)}`, margin + 22, ty);
+      pdf.setFont('helvetica', 'normal');
+      ty += 7;
+      text(slate700); pdf.text('Materials:', margin, ty);
+      text(slate900); pdf.setFont('helvetica', 'bold');
+      pdf.text(`$${materialTotal.toFixed(2)}`, margin + 22, ty);
+
+      // Right side: grand total box — vertically centered between the first and third subtotal rows
+      // Rows are at baseY+8, baseY+15, baseY+22; the midpoint is baseY+15 (= baseY + 8 + 7)
+      const boxCenterY = baseY + 8 + 7;
+      const totalsX = pageW - margin - 75;
+      fill(navyDark); pdf.roundedRect(totalsX - 4, boxCenterY - 7, 75 + 4, 16, 2, 2, 'F');
+      fill(gold); pdf.roundedRect(totalsX - 4, boxCenterY - 7, 3.5, 16, 1, 1, 'F');
+      text(white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
+      pdf.text('TOTAL DUE', totalsX + 2, boxCenterY + 3);
+      text(goldLight); pdf.setFontSize(13);
+      pdf.text(`$${grandTotal.toFixed(2)}`, pageW - margin, boxCenterY + 3.5, { align: 'right' });
+
+      // Thank-you strip
+      const thankY = baseY + footerH - 22;
+      stroke(slate300); pdf.setLineWidth(0.3);
+      pdf.line(margin, thankY, pageW - margin, thankY);
+      text(slate700); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
+      pdf.text('THANK YOU FOR YOUR BUSINESS', pageW / 2, thankY + 6, { align: 'center' });
+      text(slate300); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
+      pdf.text(branding.payment_terms, pageW / 2, thankY + 12, { align: 'center', maxWidth: contentW });
+
+      // Page number
       text(slate300); pdf.setFontSize(6.5);
       pdf.text(`Page ${i} of ${pageCount}`, pageW - margin, pageH - 5, { align: 'right' });
     }
@@ -2080,9 +2076,9 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   return (
     <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-50 flex items-center justify-center p-0 md:p-4 overflow-auto">
       <div className="w-full max-w-5xl min-h-screen md:min-h-0 py-0 md:py-12">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 px-6 md:px-0 text-white sticky top-0 md:relative z-10 py-4 md:py-0 bg-slate-900/80 md:bg-transparent backdrop-blur-md md:backdrop-blur-none">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 px-6 md:px-4 text-white sticky top-0 z-10 py-4 bg-slate-900/80 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors md:hidden">
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
               <ArrowLeft className="w-6 h-6" />
             </button>
             <h3 className="text-xl md:text-2xl font-bold font-display">Invoice Preview</h3>
@@ -2115,7 +2111,6 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
             <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 hidden md:flex">
               <Printer className="w-5 h-5" /> Print
             </button>
-            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 hidden md:flex">Close</button>
           </div>
         </div>
 
