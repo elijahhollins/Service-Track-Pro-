@@ -2076,9 +2076,9 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
   return (
     <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-50 flex items-center justify-center p-0 md:p-4 overflow-auto">
       <div className="w-full max-w-5xl min-h-screen md:min-h-0 py-0 md:py-12">
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 px-6 md:px-0 text-white sticky top-0 md:relative z-10 py-4 md:py-0 bg-slate-900/80 md:bg-transparent backdrop-blur-md md:backdrop-blur-none">
+        <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-8 px-6 md:px-4 text-white sticky top-0 z-10 py-4 bg-slate-900/80 backdrop-blur-md">
           <div className="flex items-center gap-4">
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors md:hidden">
+            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
               <ArrowLeft className="w-6 h-6" />
             </button>
             <h3 className="text-xl md:text-2xl font-bold font-display">Invoice Preview</h3>
@@ -2111,7 +2111,6 @@ const InvoiceView = ({ job, employees, equipment, materials, onClose, onSave, in
             <button onClick={() => window.print()} className="btn-secondary bg-white/10 border-white/20 text-white hover:bg-white/20 hidden md:flex">
               <Printer className="w-5 h-5" /> Print
             </button>
-            <button onClick={onClose} className="btn-primary bg-white text-slate-900 hover:bg-slate-100 hidden md:flex">Close</button>
           </div>
         </div>
 
