@@ -809,7 +809,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
 
   const handleDeleteLog = async (id: number) => {
     if (!confirm('Are you sure you want to delete this log?')) return;
-    await supabase.from('work_logs').delete().eq('id', id);
+    const { error } = await supabase.from('work_logs').delete().eq('id', id);
+    if (error) {
+      alert('Failed to delete log: ' + error.message);
+      return;
+    }
     fetchJob();
   };
 
