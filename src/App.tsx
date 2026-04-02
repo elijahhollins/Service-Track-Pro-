@@ -809,7 +809,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
 
   const handleDeleteLog = async (id: number) => {
     if (!confirm('Are you sure you want to delete this log?')) return;
-    await supabase.from('work_logs').delete().eq('id', id);
+    const { error } = await supabase.from('work_logs').delete().eq('id', id);
+    if (error) {
+      alert('Failed to delete log: ' + error.message);
+      return;
+    }
     fetchJob();
   };
 
@@ -832,6 +836,212 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
     };
     await supabase.from('work_logs').insert([newLog]);
     fetchJob();
+  };
+
+  const handleDownloadDailyReport = (log: WorkLog) => {
+    const branding = invoiceSettings ?? DEFAULT_INVOICE_SETTINGS;
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+    const margin = 14;
+    const contentW = pageW - margin * 2;
+
+    const { white, slate100, slate300, slate700, slate900 } = PDF_COLORS;
+
+    const hexToRgb = (hex: string): [number, number, number] => {
+      let clean = hex.replace('#', '');
+      if (clean.length === 3) {
+        clean = clean.split('').map(c => c + c).join('');
+      }
+      if (!/^[0-9a-fA-F]{6}$/.test(clean)) return [10, 20, 45];
+      return [
+        parseInt(clean.slice(0, 2), 16),
+        parseInt(clean.slice(2, 4), 16),
+        parseInt(clean.slice(4, 6), 16),
+      ];
+    };
+    const lighten = (rgb: [number, number, number], f: number): [number, number, number] =>
+      rgb.map(c => Math.min(255, Math.round(c + (255 - c) * f))) as [number, number, number];
+
+    const navyDark = hexToRgb(branding.header_color || '#0a142d');
+    const navyMid  = lighten(navyDark, 0.3);
+    const gold     = hexToRgb(branding.accent_color || '#c49614');
+    const goldLight = lighten(gold, 0.25);
+
+    const fill   = (c: [number, number, number]) => pdf.setFillColor(...c);
+    const stroke = (c: [number, number, number]) => pdf.setDrawColor(...c);
+    const textC  = (c: [number, number, number]) => pdf.setTextColor(...c);
+
+    // ── HEADER BAND ──────────────────────────────────────────────────────
+    fill(navyDark); pdf.rect(0, 0, pageW, 58, 'F');
+    fill(gold); pdf.rect(0, 0, pageW, 3, 'F');
+
+    // Company logo box + name
+    fill(gold);
+    pdf.roundedRect(margin, 10, 14, 14, 2, 2, 'F');
+    pdf.setFont('helvetica', 'bold');
+    textC(navyDark); pdf.setFontSize(9);
+    pdf.text((branding.logo_initials || '').slice(0, 4), margin + 2.5, 19.5);
+
+    textC(white); pdf.setFontSize(18); pdf.setFont('helvetica', 'bold');
+    pdf.text(branding.company_name.toUpperCase(), margin + 18, 18);
+    textC(slate300); pdf.setFontSize(7.5); pdf.setFont('helvetica', 'normal');
+    pdf.text(branding.company_address, margin + 18, 24);
+    pdf.text(`${branding.company_phone}  •  ${branding.company_email}`, margin + 18, 29.5);
+
+    // Right – "DAILY WORK REPORT" label
+    textC(goldLight); pdf.setFontSize(24); pdf.setFont('helvetica', 'bold');
+    pdf.text('DAILY WORK REPORT', pageW - margin, 22, { align: 'right' });
+
+    const reportDate = new Date(log.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    textC(slate300); pdf.setFontSize(8.5); pdf.setFont('helvetica', 'normal');
+    pdf.text(reportDate, pageW - margin, 32, { align: 'right' });
+    if (log.notes) {
+      textC(slate300); pdf.setFontSize(7.5); pdf.setFont('helvetica', 'italic');
+      const notesText = log.notes.length > 55 ? log.notes.slice(0, 54) + '…' : log.notes;
+      pdf.text(notesText, pageW - margin, 40, { align: 'right' });
+    }
+
+    fill(gold); pdf.rect(0, 58, pageW, 1.5, 'F');
+
+    // ── PROJECT / JOB DETAILS CARD ────────────────────────────────────────
+    const cardTop = 66;
+    const cardH = 30;
+
+    fill(slate100); stroke(slate100); pdf.roundedRect(margin, cardTop, contentW, cardH, 2, 2, 'FD');
+    fill(gold); pdf.roundedRect(margin, cardTop, 3, cardH, 1.5, 1.5, 'F');
+
+    textC(slate300); pdf.setFontSize(6.5); pdf.setFont('helvetica', 'bold');
+    pdf.text('PROJECT DETAILS', margin + 7, cardTop + 7);
+    textC(slate900); pdf.setFontSize(12); pdf.setFont('helvetica', 'bold');
+    pdf.text(job!.job_name || 'N/A', margin + 7, cardTop + 15);
+    textC(slate700); pdf.setFontSize(8); pdf.setFont('helvetica', 'normal');
+    pdf.text(`Job #: ${job!.job_number}   •   Customer: ${job!.customer_name}`, margin + 7, cardTop + 22);
+    const addrClean = (job!.address || '').replace(/\n/g, ', ');
+    pdf.text(`Address: ${addrClean}`, margin + 7, cardTop + 28);
+
+    // ── LINE ITEMS TABLE ──────────────────────────────────────────────────
+    let cursorY = cardTop + cardH + 10;
+
+    fill(navyMid); pdf.roundedRect(margin, cursorY, contentW, 10, 2, 2, 'F');
+    textC(goldLight); pdf.setFontSize(8); pdf.setFont('helvetica', 'bold');
+    pdf.text(`Work Log — ${reportDate}`, margin + 4, cursorY + 6.8);
+    cursorY += 12;
+
+    const rows: (string | number)[][] = [];
+    (log.data.employees || []).forEach(e => {
+      const empName = employees.find(emp => emp.id === e.employeeId)?.name || `Employee #${e.employeeId}`;
+      rows.push([`Labor — ${empName}`, `${e.hours}h`, `$${Number(e.rate).toFixed(2)}`, `$${(e.hours * e.rate).toFixed(2)}`]);
+    });
+    (log.data.equipment || []).forEach(e => {
+      const eqName = equipment.find(eq => eq.id === e.equipmentId)?.name || `Equipment #${e.equipmentId}`;
+      rows.push([`Equipment — ${eqName}`, `${e.hours}h`, `$${Number(e.rate).toFixed(2)}`, `$${(e.hours * e.rate).toFixed(2)}`]);
+    });
+    (log.data.materials || []).forEach(m => {
+      const price = m.unitPrice !== 0 ? m.unitPrice : (materials.find(mat => mat.id === m.materialId)?.unit_price ?? 0);
+      rows.push([`Material — ${m.name}`, `${m.quantity}`, `$${Number(price).toFixed(2)}`, `$${(m.quantity * price).toFixed(2)}`]);
+    });
+
+    if (rows.length === 0) rows.push(['No items recorded', '', '', '']);
+
+    autoTable(pdf, {
+      startY: cursorY,
+      margin: { left: margin, right: margin },
+      tableWidth: contentW,
+      head: [['DESCRIPTION', 'QTY / HRS', 'UNIT RATE', 'AMOUNT']],
+      body: rows,
+      theme: 'plain',
+      styles: {
+        font: 'helvetica',
+        fontSize: 8.5,
+        textColor: slate700,
+        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+        lineColor: [220, 228, 240],
+        lineWidth: 0.3,
+      },
+      headStyles: {
+        fillColor: [229, 234, 245],
+        textColor: slate900,
+        fontStyle: 'bold',
+        fontSize: 7,
+        lineColor: [196, 150, 20],
+        lineWidth: { bottom: 1 },
+      },
+      columnStyles: {
+        0: { cellWidth: contentW * 0.52 },
+        1: { cellWidth: contentW * 0.14, halign: 'center' },
+        2: { cellWidth: contentW * 0.17, halign: 'right' },
+        3: { cellWidth: contentW * 0.17, halign: 'right', fontStyle: 'bold', textColor: slate900 },
+      },
+      alternateRowStyles: { fillColor: [247, 249, 252] },
+      didDrawPage: () => {
+        fill(gold); pdf.rect(0, 0, pageW, 3, 'F');
+      },
+    });
+
+    cursorY = (pdf as any).lastAutoTable.finalY + 8;
+
+    // ── DAY TOTALS ─────────────────────────────────────────────────────────
+    const dayLabor     = (log.data.employees || []).reduce((s, e) => s + e.hours * e.rate, 0);
+    const dayEquipment = (log.data.equipment || []).reduce((s, e) => s + e.hours * e.rate, 0);
+    const dayMaterials = (log.data.materials || []).reduce((s, m) => {
+      const price = m.unitPrice !== 0 ? m.unitPrice : (materials.find(mat => mat.id === m.materialId)?.unit_price ?? 0);
+      return s + m.quantity * price;
+    }, 0);
+    const dayTotal = dayLabor + dayEquipment + dayMaterials;
+
+    if (cursorY + 55 > pageH - 25) { pdf.addPage(); cursorY = 18; fill(gold); pdf.rect(0, 0, pageW, 3, 'F'); }
+
+    cursorY += 2;
+    stroke(gold); pdf.setLineWidth(0.8);
+    pdf.line(margin, cursorY, pageW - margin, cursorY);
+    cursorY += 6;
+
+    const totalsX = pageW - margin - 75;
+    const totalsValX = pageW - margin;
+
+    const totalRows = [
+      ['Labor Subtotal',     `$${dayLabor.toFixed(2)}`],
+      ['Equipment Subtotal', `$${dayEquipment.toFixed(2)}`],
+      ['Material Subtotal',  `$${dayMaterials.toFixed(2)}`],
+    ];
+
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+    totalRows.forEach(([label, val]) => {
+      textC(slate700); pdf.text(label, totalsX, cursorY);
+      textC(slate900); pdf.setFont('helvetica', 'bold');
+      pdf.text(val, totalsValX, cursorY, { align: 'right' });
+      pdf.setFont('helvetica', 'normal');
+      cursorY += 8;
+    });
+
+    cursorY += 2;
+    fill(navyDark); pdf.roundedRect(totalsX - 4, cursorY - 5, 75 + 4, 16, 2, 2, 'F');
+    fill(gold); pdf.roundedRect(totalsX - 4, cursorY - 5, 3.5, 16, 1, 1, 'F');
+    textC(white); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9);
+    pdf.text('DAY TOTAL', totalsX + 2, cursorY + 5);
+    textC(goldLight); pdf.setFontSize(13);
+    pdf.text(`$${dayTotal.toFixed(2)}`, totalsValX, cursorY + 5.5, { align: 'right' });
+
+    // ── FOOTER ─────────────────────────────────────────────────────────────
+    const footerY = pageH - 22;
+    stroke(slate300); pdf.setLineWidth(0.3);
+    pdf.line(margin, footerY, pageW - margin, footerY);
+    textC(slate700); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8);
+    pdf.text('DAILY WORK REPORT', pageW / 2, footerY + 6, { align: 'center' });
+    textC(slate300); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7);
+    pdf.text(`${branding.company_name}  •  ${branding.company_phone}  •  ${branding.company_email}`, pageW / 2, footerY + 12, { align: 'center' });
+
+    const pageCount = (pdf as any).internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      textC(slate300); pdf.setFontSize(6.5);
+      pdf.text(`Page ${i} of ${pageCount}`, pageW - margin, pageH - 5, { align: 'right' });
+    }
+
+    const safeDate = log.date.split('T')[0];
+    pdf.save(`DailyReport-${job!.job_number}-${safeDate}.pdf`);
   };
 
   if (!job) return <div className="p-8">Loading...</div>;
@@ -940,11 +1150,11 @@ const JobDetails = ({ jobId, onBack, user }: { jobId: number, onBack: () => void
                       <Pencil className="w-5 h-5" />
                     </button>
                     <button 
-                      onClick={() => setEditingLog(log)}
-                      className="p-2 text-slate-400 hover:text-brand hover:bg-white rounded-lg transition-all"
-                      title="Edit Log"
+                      onClick={() => handleDownloadDailyReport(log)}
+                      className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-white rounded-lg transition-all"
+                      title="Download Daily Report"
                     >
-                      <Pencil className="w-5 h-5" />
+                      <Download className="w-5 h-5" />
                     </button>
                     <button 
                       onClick={() => handleRepeatLog(log)}
