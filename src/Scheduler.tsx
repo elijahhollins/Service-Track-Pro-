@@ -521,7 +521,14 @@ const ManageJobsModal = ({
   const cancelEdit = () => setEditNum(null);
   const saveEdit = () => {
     if (!editingNum || !editJob.jobNumber.trim()) return;
-    setLocal(prev => prev.map(j => j.jobNumber === editingNum ? { ...editJob, jobNumber: editJob.jobNumber.trim(), location: editJob.location.trim(), estimatedDays: Math.max(1, editJob.estimatedDays) } : j));
+    const newNum = editJob.jobNumber.trim();
+    // Guard against renaming to a job number already used by a different entry
+    if (newNum !== editingNum && local.some(j => j.jobNumber === newNum)) {
+      setDupError('Job number already exists');
+      return;
+    }
+    setDupError('');
+    setLocal(prev => prev.map(j => j.jobNumber === editingNum ? { ...editJob, jobNumber: newNum, location: editJob.location.trim(), estimatedDays: Math.max(1, editJob.estimatedDays) } : j));
     setEditNum(null);
   };
   const deleteJob = (num: string) => setLocal(prev => prev.filter(j => j.jobNumber !== num));
@@ -1182,7 +1189,7 @@ export default function Scheduler({
           {/* Crew rows */}
           {crewsState.map((crew, ci) => {
             const crewBlocks = blocks.filter(b => b.crewId === crew.id);
-            const color = crewColorMap.get(crew.id) ?? CREW_COLORS[0] as string;
+            const color = crewColorMap.get(crew.id) ?? CREW_COLORS[0];
 
             return (
               <div key={crew.id} className="flex" style={{ height: ROW_HEIGHT }}>
