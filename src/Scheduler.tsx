@@ -914,6 +914,8 @@ interface JobBlockProps {
   width: number;
   color: string;
   isDragging: boolean;
+  isAdmin?: boolean;
+  onDelete?: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -924,6 +926,7 @@ interface JobBlockProps {
 
 const JobBlock = ({
   block, job, left, width, color, isDragging,
+  isAdmin, onDelete,
   onDragStart, onDragEnd, onContextMenu,
   onMouseEnter, onMouseMove, onMouseLeave,
 }: JobBlockProps) => {
@@ -989,6 +992,39 @@ const JobBlock = ({
             borderColor: `transparent #fbbf24 transparent transparent`,
           }}
         />
+      )}
+
+      {/* Admin delete button — visible on block for mobile/touch accessibility */}
+      {isAdmin && onDelete && (
+        <button
+          onClick={e => { e.stopPropagation(); e.preventDefault(); onDelete(); }}
+          onMouseDown={e => e.stopPropagation()}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); onDelete(); } }}
+          title="Delete block"
+          aria-label="Delete block"
+          style={{
+            position: 'absolute',
+            top: 3,
+            right: 3,
+            width: 16,
+            height: 16,
+            borderRadius: '50%',
+            backgroundColor: 'rgba(0,0,0,0.35)',
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 0,
+            zIndex: 10,
+            lineHeight: 1,
+            color: '#fff',
+            fontSize: 10,
+            fontWeight: 700,
+          }}
+        >
+          ×
+        </button>
       )}
 
       {/* Label */}
@@ -1443,6 +1479,8 @@ export default function Scheduler({
                         width={width}
                         color={color}
                         isDragging={draggingId === block.id}
+                        isAdmin={isAdmin}
+                        onDelete={() => dispatch({ type: 'DELETE_BLOCK', id: block.id })}
                         onDragStart={e => handleDragStart(e, block)}
                         onDragEnd={handleDragEnd}
                         onContextMenu={e => {
