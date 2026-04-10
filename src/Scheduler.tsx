@@ -1,14 +1,22 @@
 import React, { useState, useReducer, useRef, useCallback, useEffect } from 'react';
 import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users } from 'lucide-react';
+import { supabase } from './supabase';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════════════════════════════════════════
 
+export interface SchedulerEmployee {
+  id: number;
+  name: string;
+  role?: string;
+}
+
 export interface Crew {
   id: string;
   name: string;
   size: number;
+  memberIds: number[];   // IDs of assigned employees
 }
 
 export interface JobOption {
@@ -51,9 +59,9 @@ const CREW_COLORS: string[] = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const MOCK_CREWS: Crew[] = [
-  { id: 'c1', name: 'Alpha Crew',  size: 4 },
-  { id: 'c2', name: 'Beta Crew',   size: 3 },
-  { id: 'c3', name: 'Gamma Crew',  size: 5 },
+  { id: 'c1', name: 'Alpha Crew',  size: 4, memberIds: [] },
+  { id: 'c2', name: 'Beta Crew',   size: 3, memberIds: [] },
+  { id: 'c3', name: 'Gamma Crew',  size: 5, memberIds: [] },
 ];
 
 export const MOCK_JOBS: JobOption[] = [
@@ -371,44 +379,122 @@ const DayPromptModal = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// CREW MEMBER PICKER  (checkbox list used inside ManageCrewsModal)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const CrewMemberPicker = ({
+  employees,
+  selected,
+  onChange,
+}: {
+  employees: SchedulerEmployee[];
+  selected: number[];
+  onChange: (ids: number[]) => void;
+}) => {
+  const toggle = (id: number) =>
+    onChange(selected.includes(id) ? selected.filter(x => x !== id) : [...selected, id]);
+
+  if (employees.length === 0) {
+    return (
+      <p className="text-xs text-slate-400 italic py-2 px-1">No employees found.</p>
+    );
+  }
+  return (
+    <div
+      className="border border-slate-200 rounded-lg overflow-y-auto divide-y divide-slate-100"
+      style={{ maxHeight: 180 }}
+    >
+      {employees.map(emp => (
+        <label
+          key={emp.id}
+          className="flex items-center gap-3 px-3 py-2 hover:bg-slate-50 cursor-pointer select-none"
+        >
+          <input
+            type="checkbox"
+            checked={selected.includes(emp.id)}
+            onChange={() => toggle(emp.id)}
+            className="w-4 h-4 rounded accent-blue-600 shrink-0"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-slate-800 font-medium truncate">{emp.name}</div>
+            {emp.role && (
+              <div className="text-[10px] text-slate-400 capitalize truncate">{emp.role}</div>
+            )}
+          </div>
+        </label>
+      ))}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // MANAGE CREWS MODAL  (admin only)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const ManageCrewsModal = ({
   crews,
+  employees,
   onUpdate,
   onClose,
 }: {
   crews: Crew[];
+  employees: SchedulerEmployee[];
   onUpdate: (crews: Crew[]) => void;
   onClose: () => void;
 }) => {
-  const [local, setLocal]       = useState<Crew[]>(crews);
-  const [editingId, setEditId]  = useState<string | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editSize, setEditSize] = useState(1);
-  const [newName, setNewName]   = useState('');
-  const [newSize, setNewSize]   = useState(2);
+  const hasEmployees = employees.length > 0;
 
-  const startEdit = (c: Crew) => { setEditId(c.id); setEditName(c.name); setEditSize(c.size); };
+  const [local, setLocal]               = useState<Crew[]>(crews);
+  const [editingId, setEditId]          = useState<string | null>(null);
+  const [editName, setEditName]         = useState('');
+  const [editSize, setEditSize]         = useState(1);
+  const [editMemberIds, setEditMembers] = useState<number[]>([]);
+  const [newName, setNewName]           = useState('');
+  const [newSize, setNewSize]           = useState(2);
+  const [newMemberIds, setNewMembers]   = useState<number[]>([]);
+
+  const startEdit = (c: Crew) => {
+    setEditId(c.id);
+    setEditName(c.name);
+    setEditSize(c.size);
+    setEditMembers(c.memberIds ?? []);
+  };
   const cancelEdit = () => setEditId(null);
   const saveEdit = () => {
     if (!editingId || !editName.trim()) return;
+    const finalSize = hasEmployees ? editMemberIds.length : Math.max(1, editSize);
     setLocal(prev => prev.map(c =>
-      c.id === editingId ? { ...c, name: editName.trim(), size: Math.max(1, editSize) } : c
+      c.id === editingId
+        ? { ...c, name: editName.trim(), size: finalSize, memberIds: editMemberIds }
+        : c
     ));
     setEditId(null);
   };
   const deleteCrew = (id: string) => setLocal(prev => prev.filter(c => c.id !== id));
   const addCrew = () => {
     if (!newName.trim()) return;
-    setLocal(prev => [...prev, { id: `crew-${crypto.randomUUID()}`, name: newName.trim(), size: Math.max(1, newSize) }]);
-    setNewName(''); setNewSize(2);
+    const finalSize = hasEmployees ? newMemberIds.length : Math.max(1, newSize);
+    setLocal(prev => [...prev, {
+      id: `crew-${crypto.randomUUID()}`,
+      name: newName.trim(),
+      size: finalSize,
+      memberIds: newMemberIds,
+    }]);
+    setNewName('');
+    setNewSize(2);
+    setNewMembers([]);
+  };
+
+  const memberLabel = (c: Crew): string => {
+    if (hasEmployees && c.memberIds.length > 0) {
+      return `${c.memberIds.length} ${c.memberIds.length === 1 ? 'worker' : 'workers'}`;
+    }
+    return `${c.size} workers`;
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col" style={{ maxHeight: '82vh' }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col" style={{ maxHeight: '88vh' }}>
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
           <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
             <Users className="w-5 h-5 text-blue-500" />
@@ -425,24 +511,42 @@ const ManageCrewsModal = ({
             const color = CREW_COLORS[i % CREW_COLORS.length];
             if (editingId === c.id) {
               return (
-                <div key={c.id} className="flex items-center gap-2 p-3 bg-blue-50 rounded-xl border border-blue-200">
-                  <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
-                  <input
-                    autoFocus
-                    value={editName}
-                    onChange={e => setEditName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && saveEdit()}
-                    className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
-                    placeholder="Crew name"
-                  />
-                  <input
-                    type="number" min={1} max={50}
-                    value={editSize}
-                    onChange={e => setEditSize(parseInt(e.target.value) || 1)}
-                    className="w-16 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                  <button onClick={saveEdit} className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Save</button>
-                  <button onClick={cancelEdit} className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"><X className="w-4 h-4" /></button>
+                <div key={c.id} className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
+                    <input
+                      autoFocus
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && !hasEmployees && saveEdit()}
+                      className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
+                      placeholder="Crew name"
+                    />
+                    {!hasEmployees && (
+                      <input
+                        type="number" min={1} max={50}
+                        value={editSize}
+                        onChange={e => setEditSize(parseInt(e.target.value) || 1)}
+                        className="w-16 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      />
+                    )}
+                  </div>
+                  {hasEmployees && (
+                    <div className="space-y-1.5">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                        Members ({editMemberIds.length} selected)
+                      </p>
+                      <CrewMemberPicker
+                        employees={employees}
+                        selected={editMemberIds}
+                        onChange={setEditMembers}
+                      />
+                    </div>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={saveEdit} className="flex-1 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Save</button>
+                    <button onClick={cancelEdit} className="px-4 py-1.5 border border-slate-200 text-slate-600 text-xs rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+                  </div>
                 </div>
               );
             }
@@ -451,7 +555,18 @@ const ManageCrewsModal = ({
                 <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold text-slate-800 truncate">{c.name}</div>
-                  <div className="text-xs text-slate-400">{c.size} workers</div>
+                  <div className="text-xs text-slate-400">{memberLabel(c)}</div>
+                  {hasEmployees && c.memberIds.length > 0 && (() => {
+                    const names = c.memberIds
+                      .map(id => employees.find(e => e.id === id)?.name)
+                      .filter(Boolean) as string[];
+                    const display = names.length <= 2
+                      ? names.join(', ')
+                      : `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+                    return (
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5" title={names.join(', ')}>{display}</div>
+                    );
+                  })()}
                 </div>
                 <button onClick={() => startEdit(c)} title="Edit" className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
                 <button onClick={() => deleteCrew(c.id)} title="Delete" className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -466,23 +581,39 @@ const ManageCrewsModal = ({
             <input
               value={newName}
               onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && addCrew()}
+              onKeyDown={e => e.key === 'Enter' && !hasEmployees && addCrew()}
               className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
               placeholder="Crew name"
             />
-            <input
-              type="number" min={1} max={50}
-              value={newSize}
-              onChange={e => setNewSize(parseInt(e.target.value) || 1)}
-              className="w-16 border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-              placeholder="Size"
-            />
+            {!hasEmployees && (
+              <input
+                type="number" min={1} max={50}
+                value={newSize}
+                onChange={e => setNewSize(parseInt(e.target.value) || 1)}
+                className="w-16 border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                placeholder="Size"
+              />
+            )}
+          </div>
+          {hasEmployees && (
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Select Members ({newMemberIds.length} selected)
+              </p>
+              <CrewMemberPicker
+                employees={employees}
+                selected={newMemberIds}
+                onChange={setNewMembers}
+              />
+            </div>
+          )}
+          <div className="flex gap-2">
             <button
               onClick={addCrew}
               disabled={!newName.trim()}
-              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-40"
+              className="flex-1 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4" /> Add Crew
             </button>
           </div>
           <button
@@ -888,6 +1019,7 @@ interface SchedulerProps {
   initialBlocks?: ScheduleBlock[];
   onScheduleChange?: (schedule: ScheduleBlock[]) => void;
   userRole?: string;
+  companyId?: string;
 }
 
 export default function Scheduler({
@@ -896,13 +1028,29 @@ export default function Scheduler({
   initialBlocks = INITIAL_BLOCKS,
   onScheduleChange,
   userRole,
+  companyId,
 }: SchedulerProps) {
   const isAdmin = userRole === 'admin';
   const [crewsState, setCrewsState] = useState<Crew[]>(initialCrews);
   const [jobsState,  setJobsState]  = useState<JobOption[]>(initialJobs);
+  const [employeeList, setEmployeeList] = useState<SchedulerEmployee[]>([]);
   const [blocks, dispatch] = useReducer(reducer, initialBlocks);
   const [view, setView]    = useState<'week' | 'month'>('week');
   const [viewOffset, setViewOffset] = useState(0); // days from default start
+
+  // Fetch employees from Supabase when companyId is available (admin use)
+  useEffect(() => {
+    if (!companyId) return;
+    supabase
+      .from('employees')
+      .select('id, name, role')
+      .eq('company_id', companyId)
+      .order('name')
+      .then(({ data, error }) => {
+        if (error) console.error('[Scheduler] Failed to load employees:', error.message);
+        else if (data) setEmployeeList(data as SchedulerEmployee[]);
+      });
+  }, [companyId]);
 
   const dayWidth  = view === 'week' ? 60 : 24;
   const totalDays = view === 'week' ? 28 : 90;
@@ -1207,13 +1355,33 @@ export default function Scheduler({
                   }}
                 >
                   <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
-                  <div>
-                    <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600, lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                       {crew.name}
                     </div>
-                    <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>
-                      {crew.size} workers
-                    </div>
+                    {(() => {
+                      const memberNames = crew.memberIds.length > 0 && employeeList.length > 0
+                        ? crew.memberIds
+                            .map(id => employeeList.find(e => e.id === id)?.name)
+                            .filter(Boolean) as string[]
+                        : [];
+                      const workerCount = crew.memberIds.length || crew.size;
+                      return (
+                        <>
+                          <div style={{ color: '#475569', fontSize: 10, marginTop: 2 }}>
+                            {workerCount} {workerCount === 1 ? 'worker' : 'workers'}
+                          </div>
+                          {memberNames.length > 0 && (
+                            <div
+                              style={{ color: '#64748b', fontSize: 9, marginTop: 1, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}
+                              title={memberNames.join(', ')}
+                            >
+                              {memberNames.slice(0, 2).join(', ')}{memberNames.length > 2 ? ` +${memberNames.length - 2}` : ''}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1335,6 +1503,7 @@ export default function Scheduler({
       {showManageCrews && (
         <ManageCrewsModal
           crews={crewsState}
+          employees={employeeList}
           onUpdate={setCrewsState}
           onClose={() => setShowManageCrews(false)}
         />
