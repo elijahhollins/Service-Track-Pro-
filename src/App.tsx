@@ -4198,7 +4198,7 @@ export default function App() {
         )
       )}
       {activeTab === 'users' && user.role === 'admin' && <UserManagement user={user} />}
-      {activeTab === 'scheduler' && (user.role === 'admin' || user.role === 'foreman') && <Scheduler />}
+      {activeTab === 'scheduler' && (user.role === 'admin' || user.role === 'foreman') && <Scheduler userRole={user.role} />}
       {activeTab === 'settings' && (user.role === 'admin' || user.role === 'foreman') && <Settings user={user} />}
       {activeTab === 'super-admin' && user.role === 'super_admin' && <SuperAdminDashboard />}
     </Layout>

@@ -1,5 +1,5 @@
 import React, { useState, useReducer, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users } from 'lucide-react';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -371,6 +371,277 @@ const DayPromptModal = ({
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// MANAGE CREWS MODAL  (admin only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ManageCrewsModal = ({
+  crews,
+  onUpdate,
+  onClose,
+}: {
+  crews: Crew[];
+  onUpdate: (crews: Crew[]) => void;
+  onClose: () => void;
+}) => {
+  const [local, setLocal]       = useState<Crew[]>(crews);
+  const [editingId, setEditId]  = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editSize, setEditSize] = useState(1);
+  const [newName, setNewName]   = useState('');
+  const [newSize, setNewSize]   = useState(2);
+
+  const startEdit = (c: Crew) => { setEditId(c.id); setEditName(c.name); setEditSize(c.size); };
+  const cancelEdit = () => setEditId(null);
+  const saveEdit = () => {
+    if (!editingId || !editName.trim()) return;
+    setLocal(prev => prev.map(c =>
+      c.id === editingId ? { ...c, name: editName.trim(), size: Math.max(1, editSize) } : c
+    ));
+    setEditId(null);
+  };
+  const deleteCrew = (id: string) => setLocal(prev => prev.filter(c => c.id !== id));
+  const addCrew = () => {
+    if (!newName.trim()) return;
+    setLocal(prev => [...prev, { id: `crew-${crypto.randomUUID()}`, name: newName.trim(), size: Math.max(1, newSize) }]);
+    setNewName(''); setNewSize(2);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col" style={{ maxHeight: '82vh' }}>
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-500" />
+            Manage Crews
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+          {local.length === 0 && (
+            <p className="text-center text-slate-400 text-sm py-6 italic">No crews yet. Add one below.</p>
+          )}
+          {local.map((c, i) => {
+            const color = CREW_COLORS[i % CREW_COLORS.length];
+            if (editingId === c.id) {
+              return (
+                <div key={c.id} className="flex items-center gap-2 p-3 bg-blue-50 rounded-xl border border-blue-200">
+                  <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
+                  <input
+                    autoFocus
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && saveEdit()}
+                    className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
+                    placeholder="Crew name"
+                  />
+                  <input
+                    type="number" min={1} max={50}
+                    value={editSize}
+                    onChange={e => setEditSize(parseInt(e.target.value) || 1)}
+                    className="w-16 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <button onClick={saveEdit} className="px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Save</button>
+                  <button onClick={cancelEdit} className="p-1.5 text-slate-400 hover:text-slate-600 transition-colors"><X className="w-4 h-4" /></button>
+                </div>
+              );
+            }
+            return (
+              <div key={c.id} className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-slate-800 truncate">{c.name}</div>
+                  <div className="text-xs text-slate-400">{c.size} workers</div>
+                </div>
+                <button onClick={() => startEdit(c)} title="Edit" className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                <button onClick={() => deleteCrew(c.id)} title="Delete" className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-6 pb-5 pt-3 border-t border-slate-100 space-y-3 shrink-0">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Add New Crew</p>
+          <div className="flex gap-2">
+            <input
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addCrew()}
+              className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
+              placeholder="Crew name"
+            />
+            <input
+              type="number" min={1} max={50}
+              value={newSize}
+              onChange={e => setNewSize(parseInt(e.target.value) || 1)}
+              className="w-16 border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="Size"
+            />
+            <button
+              onClick={addCrew}
+              disabled={!newName.trim()}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-40"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+          <button
+            onClick={() => { onUpdate(local); onClose(); }}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold transition-colors"
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MANAGE JOBS MODAL  (admin only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ManageJobsModal = ({
+  jobs,
+  onUpdate,
+  onClose,
+}: {
+  jobs: JobOption[];
+  onUpdate: (jobs: JobOption[]) => void;
+  onClose: () => void;
+}) => {
+  const blank: JobOption = { jobNumber: '', location: '', estimatedDays: 1 };
+  const [local, setLocal]           = useState<JobOption[]>(jobs);
+  const [editingNum, setEditNum]    = useState<string | null>(null);
+  const [editJob, setEditJob]       = useState<JobOption>(blank);
+  const [newJob, setNewJob]         = useState<JobOption>(blank);
+  const [dupError, setDupError]     = useState('');
+
+  const startEdit = (j: JobOption) => { setEditNum(j.jobNumber); setEditJob({ ...j }); };
+  const cancelEdit = () => setEditNum(null);
+  const saveEdit = () => {
+    if (!editingNum || !editJob.jobNumber.trim()) return;
+    setLocal(prev => prev.map(j => j.jobNumber === editingNum ? { ...editJob, jobNumber: editJob.jobNumber.trim(), location: editJob.location.trim(), estimatedDays: Math.max(1, editJob.estimatedDays) } : j));
+    setEditNum(null);
+  };
+  const deleteJob = (num: string) => setLocal(prev => prev.filter(j => j.jobNumber !== num));
+  const addJob = () => {
+    if (!newJob.jobNumber.trim() || !newJob.location.trim()) return;
+    if (local.some(j => j.jobNumber === newJob.jobNumber.trim())) { setDupError('Job number already exists'); return; }
+    setDupError('');
+    setLocal(prev => [...prev, { jobNumber: newJob.jobNumber.trim(), location: newJob.location.trim(), estimatedDays: Math.max(1, newJob.estimatedDays) }]);
+    setNewJob(blank);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col" style={{ maxHeight: '85vh' }}>
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 shrink-0">
+          <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+            <Briefcase className="w-5 h-5 text-blue-500" />
+            Manage Jobs
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors"><X className="w-5 h-5" /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+          {local.length === 0 && (
+            <p className="text-center text-slate-400 text-sm py-6 italic">No jobs yet. Add one below.</p>
+          )}
+          {local.map(j => {
+            if (editingNum === j.jobNumber) {
+              return (
+                <div key={j.jobNumber} className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      autoFocus
+                      value={editJob.jobNumber}
+                      onChange={e => setEditJob(p => ({ ...p, jobNumber: e.target.value }))}
+                      className="w-28 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      placeholder="Job #"
+                    />
+                    <input
+                      value={editJob.location}
+                      onChange={e => setEditJob(p => ({ ...p, location: e.target.value }))}
+                      className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
+                      placeholder="Location"
+                    />
+                    <input
+                      type="number" min={1} max={365}
+                      value={editJob.estimatedDays}
+                      onChange={e => setEditJob(p => ({ ...p, estimatedDays: parseInt(e.target.value) || 1 }))}
+                      className="w-14 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      placeholder="Days"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={saveEdit} className="flex-1 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Save</button>
+                    <button onClick={cancelEdit} className="px-4 py-1.5 border border-slate-200 text-slate-600 text-xs rounded-lg hover:bg-slate-50 transition-colors">Cancel</button>
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={j.jobNumber} className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{j.jobNumber}</span>
+                    <span className="text-xs text-slate-400">{j.estimatedDays}d</span>
+                  </div>
+                  <div className="text-sm text-slate-700 truncate mt-0.5">{j.location}</div>
+                </div>
+                <button onClick={() => startEdit(j)} title="Edit" className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                <button onClick={() => deleteJob(j.jobNumber)} title="Delete" className="p-1.5 text-slate-400 hover:text-red-500 transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="px-6 pb-5 pt-3 border-t border-slate-100 space-y-3 shrink-0">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Add New Job</p>
+          {dupError && <p className="text-xs text-red-500">{dupError}</p>}
+          <div className="flex gap-2">
+            <input
+              value={newJob.jobNumber}
+              onChange={e => { setDupError(''); setNewJob(p => ({ ...p, jobNumber: e.target.value })); }}
+              className="w-28 border border-slate-200 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="Job #"
+            />
+            <input
+              value={newJob.location}
+              onChange={e => setNewJob(p => ({ ...p, location: e.target.value }))}
+              onKeyDown={e => e.key === 'Enter' && addJob()}
+              className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
+              placeholder="Location"
+            />
+            <input
+              type="number" min={1} max={365}
+              value={newJob.estimatedDays}
+              onChange={e => setNewJob(p => ({ ...p, estimatedDays: parseInt(e.target.value) || 1 }))}
+              className="w-14 border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
+              placeholder="Days"
+            />
+            <button
+              onClick={addJob}
+              disabled={!newJob.jobNumber.trim() || !newJob.location.trim()}
+              className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-40"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+          <button
+            onClick={() => { onUpdate(local); onClose(); }}
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-sm font-semibold transition-colors"
+          >
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ADD BLOCK MODAL
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -609,14 +880,19 @@ interface SchedulerProps {
   jobs?: JobOption[];
   initialBlocks?: ScheduleBlock[];
   onScheduleChange?: (schedule: ScheduleBlock[]) => void;
+  userRole?: string;
 }
 
 export default function Scheduler({
-  crews = MOCK_CREWS,
-  jobs  = MOCK_JOBS,
+  crews: initialCrews = MOCK_CREWS,
+  jobs: initialJobs   = MOCK_JOBS,
   initialBlocks = INITIAL_BLOCKS,
   onScheduleChange,
+  userRole,
 }: SchedulerProps) {
+  const isAdmin = userRole === 'admin';
+  const [crewsState, setCrewsState] = useState<Crew[]>(initialCrews);
+  const [jobsState,  setJobsState]  = useState<JobOption[]>(initialJobs);
   const [blocks, dispatch] = useReducer(reducer, initialBlocks);
   const [view, setView]    = useState<'week' | 'month'>('week');
   const [viewOffset, setViewOffset] = useState(0); // days from default start
@@ -631,8 +907,8 @@ export default function Scheduler({
   const totalGridWidth = totalDays * dayWidth;
 
   // Per-crew color lookup
-  const crewColorMap = new Map(
-    crews.map((c, i) => [c.id, CREW_COLORS[i % CREW_COLORS.length]]),
+  const crewColorMap = new Map<string, string>(
+    crewsState.map((c, i) => [c.id, CREW_COLORS[i % CREW_COLORS.length]]),
   );
 
   // Drag state
@@ -640,10 +916,12 @@ export default function Scheduler({
   const [dragOffsetDays, setDragOffsetDays] = useState(0);
 
   // Overlay state
-  const [ctxMenu,      setCtxMenu]      = useState<CtxMenuState | null>(null);
-  const [dayPrompt,    setDayPrompt]    = useState<DayPromptState | null>(null);
-  const [tooltip,      setTooltip]      = useState<TooltipState | null>(null);
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [ctxMenu,           setCtxMenu]           = useState<CtxMenuState | null>(null);
+  const [dayPrompt,         setDayPrompt]         = useState<DayPromptState | null>(null);
+  const [tooltip,           setTooltip]           = useState<TooltipState | null>(null);
+  const [showAddModal,      setShowAddModal]      = useState(false);
+  const [showManageCrews,   setShowManageCrews]   = useState(false);
+  const [showManageJobs,    setShowManageJobs]    = useState(false);
 
   // Ref to the outer scroll container (needed for drop position calc)
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -774,7 +1052,23 @@ export default function Scheduler({
           {fmtShort(viewStart)} – {fmtShort(addDays(viewStart, totalDays - 1))}
         </span>
 
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          {isAdmin && (
+            <>
+              <button
+                onClick={() => setShowManageCrews(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-white/10"
+              >
+                <Users className="w-3.5 h-3.5" /> Crews
+              </button>
+              <button
+                onClick={() => setShowManageJobs(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-slate-200 text-xs font-semibold rounded-lg transition-colors border border-white/10"
+              >
+                <Briefcase className="w-3.5 h-3.5" /> Jobs
+              </button>
+            </>
+          )}
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
@@ -886,9 +1180,9 @@ export default function Scheduler({
           </div>
 
           {/* Crew rows */}
-          {crews.map((crew, ci) => {
+          {crewsState.map((crew, ci) => {
             const crewBlocks = blocks.filter(b => b.crewId === crew.id);
-            const color = crewColorMap.get(crew.id) ?? CREW_COLORS[0];
+            const color = crewColorMap.get(crew.id) ?? CREW_COLORS[0] as string;
 
             return (
               <div key={crew.id} className="flex" style={{ height: ROW_HEIGHT }}>
@@ -963,7 +1257,7 @@ export default function Scheduler({
                     const left  = diffDays(block.startDate, viewStart) * dayWidth;
                     const width = block.durationDays * dayWidth;
                     if (left + width < 0 || left > totalGridWidth) return null;
-                    const job = jobs.find(j => j.jobNumber === block.jobNumber);
+                    const job = jobsState.find(j => j.jobNumber === block.jobNumber);
                     return (
                       <JobBlock
                         key={block.id}
@@ -1024,10 +1318,26 @@ export default function Scheduler({
 
       {showAddModal && (
         <AddBlockModal
-          crews={crews}
-          jobs={jobs}
+          crews={crewsState}
+          jobs={jobsState}
           onAdd={block => dispatch({ type: 'ADD_BLOCK', block })}
           onClose={() => setShowAddModal(false)}
+        />
+      )}
+
+      {showManageCrews && (
+        <ManageCrewsModal
+          crews={crewsState}
+          onUpdate={setCrewsState}
+          onClose={() => setShowManageCrews(false)}
+        />
+      )}
+
+      {showManageJobs && (
+        <ManageJobsModal
+          jobs={jobsState}
+          onUpdate={setJobsState}
+          onClose={() => setShowManageJobs(false)}
         />
       )}
     </div>
