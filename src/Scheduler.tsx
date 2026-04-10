@@ -144,6 +144,7 @@ type Action =
   | { type: 'EXTEND_JOB';         blockId: string; days: number }
   | { type: 'ADD_BLOCK';          block: ScheduleBlock }
   | { type: 'DELETE_BLOCK';       id: string }
+  | { type: 'REPLACE_ALL';        blocks: ScheduleBlock[] }
   | { type: 'ASSIGN_EQUIPMENT';   blockId: string; equipmentId: number }
   | { type: 'UNASSIGN_EQUIPMENT'; blockId: string; equipmentId: number };
 
@@ -207,6 +208,9 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
 
     case 'DELETE_BLOCK':
       return state.filter(b => b.id !== action.id);
+
+    case 'REPLACE_ALL':
+      return action.blocks;
 
     case 'ASSIGN_EQUIPMENT':
       return state.map(b =>
@@ -1331,6 +1335,141 @@ export default function Scheduler({
   const [blocks, dispatch] = useReducer(reducer, initialBlocks);
   const [view, setView]    = useState<'week' | 'month'>('week');
   const [viewOffset, setViewOffset] = useState(0); // days from default start
+
+  // Guards to avoid saving before the initial Supabase load completes
+  const dbLoadedRef = useRef(false);
+
+  // ── Load schedule data from Supabase on mount ──────────────────────────────
+  useEffect(() => {
+    if (!companyId) return;
+
+    Promise.all([
+      supabase.from('schedule_crews').select('id, name, member_ids').eq('company_id', companyId).order('created_at'),
+      supabase.from('schedule_job_options').select('job_number, location, estimated_days').eq('company_id', companyId).order('created_at'),
+      supabase.from('schedule_blocks').select('id, crew_id, job_number, start_date, duration_days, type, extended, equipment_ids').eq('company_id', companyId),
+    ]).then(([crewsRes, jobsRes, blocksRes]) => {
+      if (crewsRes.error)  console.error('[Scheduler] Failed to load crews:',  crewsRes.error.message);
+      if (jobsRes.error)   console.error('[Scheduler] Failed to load jobs:',   jobsRes.error.message);
+      if (blocksRes.error) console.error('[Scheduler] Failed to load blocks:', blocksRes.error.message);
+
+      // Only replace mock data when Supabase returns actual rows
+      if (crewsRes.data && crewsRes.data.length > 0) {
+        setCrewsState(crewsRes.data.map(r => ({
+          id:        r.id,
+          name:      r.name,
+          size:      (r.member_ids ?? []).length,
+          memberIds: r.member_ids ?? [],
+        })));
+      }
+      if (jobsRes.data && jobsRes.data.length > 0) {
+        setJobsState(jobsRes.data.map(r => ({
+          jobNumber:     r.job_number,
+          location:      r.location,
+          estimatedDays: r.estimated_days,
+        })));
+      }
+      if (blocksRes.data && blocksRes.data.length > 0) {
+        const loaded: ScheduleBlock[] = blocksRes.data.map(r => ({
+          id:            r.id,
+          crewId:        r.crew_id,
+          jobNumber:     r.job_number,
+          startDate:     r.start_date,
+          durationDays:  r.duration_days,
+          type:          r.type as 'job' | 'delay',
+          extended:      r.extended,
+          equipmentIds:  r.equipment_ids ?? [],
+        }));
+        dispatch({ type: 'REPLACE_ALL', blocks: loaded });
+        dbBlockIdsRef.current = new Set(loaded.map(b => b.id));
+      }
+
+      dbLoadedRef.current = true;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
+
+  // Tracks block IDs that exist in the DB so we can diff-delete without a
+  // round-trip SELECT on every state change.
+  const dbBlockIdsRef = useRef<Set<string>>(new Set());
+
+  // ── Persist crews to Supabase whenever they change (debounced 600 ms) ──────
+  useEffect(() => {
+    if (!companyId || !dbLoadedRef.current) return;
+    const rows = crewsState.map(c => ({
+      id:         c.id,
+      company_id: companyId,
+      name:       c.name,
+      member_ids: c.memberIds,
+    }));
+    if (rows.length === 0) return;
+    const t = setTimeout(() => {
+      supabase.from('schedule_crews').upsert(rows, { onConflict: 'id' })
+        .then(({ error }) => { if (error) console.error('[Scheduler] Failed to save crews:', error.message); });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [crewsState, companyId]);
+
+  // ── Persist job options to Supabase whenever they change (debounced 600 ms)
+  useEffect(() => {
+    if (!companyId || !dbLoadedRef.current) return;
+    const rows = jobsState.map(j => ({
+      company_id:     companyId,
+      job_number:     j.jobNumber,
+      location:       j.location,
+      estimated_days: j.estimatedDays,
+    }));
+    if (rows.length === 0) return;
+    const t = setTimeout(() => {
+      supabase.from('schedule_job_options').upsert(rows, { onConflict: 'company_id,job_number' })
+        .then(({ error }) => { if (error) console.error('[Scheduler] Failed to save job options:', error.message); });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [jobsState, companyId]);
+
+  // ── Persist blocks to Supabase whenever they change (debounced 600 ms) ─────
+  useEffect(() => {
+    if (!companyId || !dbLoadedRef.current) return;
+    const rows = blocks.map(b => ({
+      id:            b.id,
+      company_id:    companyId,
+      crew_id:       b.crewId,
+      job_number:    b.jobNumber,
+      start_date:    b.startDate,
+      duration_days: b.durationDays,
+      type:          b.type,
+      extended:      b.extended,
+      equipment_ids: b.equipmentIds ?? [],
+    }));
+
+    const currentIds = new Set(blocks.map(b => b.id));
+    // Ids that were in the DB but are no longer in state → need deleting
+    const toDelete = [...dbBlockIdsRef.current].filter(id => !currentIds.has(id));
+
+    const t = setTimeout(() => {
+      if (rows.length > 0) {
+        supabase.from('schedule_blocks').upsert(rows, { onConflict: 'id' })
+          .then(({ error }) => {
+            if (error) {
+              console.error('[Scheduler] Failed to save blocks:', error.message);
+            } else {
+              // Update our local DB-id mirror
+              dbBlockIdsRef.current = currentIds;
+            }
+          });
+      }
+      if (toDelete.length > 0) {
+        supabase.from('schedule_blocks').delete().in('id', toDelete)
+          .then(({ error }) => {
+            if (error) {
+              console.error('[Scheduler] Failed to delete blocks:', error.message);
+            } else {
+              toDelete.forEach(id => dbBlockIdsRef.current.delete(id));
+            }
+          });
+      }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [blocks, companyId]);
 
   // Fetch employees from Supabase when companyId is available (admin use)
   useEffect(() => {
