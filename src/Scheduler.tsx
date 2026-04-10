@@ -151,7 +151,7 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
       const job = state.find(b => b.id === action.blockId);
       if (!job) return state;
       const delay: ScheduleBlock = {
-        id: `delay-${Date.now()}`,
+        id: `delay-${crypto.randomUUID()}`,
         crewId: job.crewId,
         jobNumber: `Delay \u2013 ${action.days} day${action.days !== 1 ? 's' : ''}`,
         startDate: job.startDate,
@@ -395,7 +395,7 @@ const AddBlockModal = ({
     e.preventDefault();
     if (!crewId || !jobNum || !selectedJob) return;
     onAdd({
-      id: `block-${Date.now()}`,
+      id: `block-${crypto.randomUUID()}`,
       crewId,
       jobNumber: jobNum,
       startDate,
@@ -647,6 +647,8 @@ export default function Scheduler({
 
   // Ref to the outer scroll container (needed for drop position calc)
   const scrollRef = useRef<HTMLDivElement>(null);
+  // requestAnimationFrame ID for throttling tooltip mouse-move updates
+  const tooltipRafRef = useRef<number | null>(null);
 
   // Notify parent when blocks change
   const prevRef = useRef(blocks);
@@ -979,7 +981,15 @@ export default function Scheduler({
                           setCtxMenu({ blockId: block.id, blockType: block.type, x: e.clientX, y: e.clientY });
                         }}
                         onMouseEnter={e => setTooltip({ block, job, crew, x: e.clientX, y: e.clientY })}
-                        onMouseMove={e  => setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                        onMouseMove={e  => {
+                          const x = e.clientX;
+                          const y = e.clientY;
+                          if (tooltipRafRef.current !== null) return;
+                          tooltipRafRef.current = requestAnimationFrame(() => {
+                            tooltipRafRef.current = null;
+                            setTooltip(t => t ? { ...t, x, y } : t);
+                          });
+                        }}
                         onMouseLeave={() => setTooltip(null)}
                       />
                     );
