@@ -1,5 +1,5 @@
 import React, { useState, useReducer, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users, Wrench } from 'lucide-react';
 import { supabase } from './supabase';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -10,6 +10,12 @@ export interface SchedulerEmployee {
   id: number;
   name: string;
   role?: string;
+}
+
+export interface SchedulerEquipment {
+  id: number;
+  name: string;
+  hourly_rate?: number;
 }
 
 export interface Crew {
@@ -33,6 +39,7 @@ export interface ScheduleBlock {
   durationDays: number;
   type: 'job' | 'delay';
   extended: boolean;
+  equipmentIds?: number[];  // IDs of equipment assigned to be on site
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -70,6 +77,14 @@ export const MOCK_JOBS: JobOption[] = [
   { jobNumber: 'J-1003', location: '789 Pine Rd, Capital City', estimatedDays: 7 },
   { jobNumber: 'J-1004', location: '321 Elm St, Shelbyville',   estimatedDays: 4 },
   { jobNumber: 'J-1005', location: '654 Maple Dr, Springfield', estimatedDays: 6 },
+];
+
+export const MOCK_EQUIPMENT: SchedulerEquipment[] = [
+  { id: 1, name: 'Excavator',      hourly_rate: 150 },
+  { id: 2, name: 'Dump Truck',     hourly_rate: 80  },
+  { id: 3, name: 'Skid Steer',     hourly_rate: 70  },
+  { id: 4, name: 'Concrete Mixer', hourly_rate: 45  },
+  { id: 5, name: 'Compactor',      hourly_rate: 35  },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -124,11 +139,13 @@ const INITIAL_BLOCKS: ScheduleBlock[] = [
 // ═══════════════════════════════════════════════════════════════════════════════
 
 type Action =
-  | { type: 'MOVE_BLOCK';   id: string; crewId: string; startDate: string }
-  | { type: 'INSERT_DELAY'; blockId: string; days: number }
-  | { type: 'EXTEND_JOB';   blockId: string; days: number }
-  | { type: 'ADD_BLOCK';    block: ScheduleBlock }
-  | { type: 'DELETE_BLOCK'; id: string };
+  | { type: 'MOVE_BLOCK';         id: string; crewId: string; startDate: string }
+  | { type: 'INSERT_DELAY';       blockId: string; days: number }
+  | { type: 'EXTEND_JOB';         blockId: string; days: number }
+  | { type: 'ADD_BLOCK';          block: ScheduleBlock }
+  | { type: 'DELETE_BLOCK';       id: string }
+  | { type: 'ASSIGN_EQUIPMENT';   blockId: string; equipmentId: number }
+  | { type: 'UNASSIGN_EQUIPMENT'; blockId: string; equipmentId: number };
 
 /** Push all blocks for a crew that start on or after `fromDate` forward by `shiftDays`. */
 function shiftAfter(
@@ -191,10 +208,188 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
     case 'DELETE_BLOCK':
       return state.filter(b => b.id !== action.id);
 
+    case 'ASSIGN_EQUIPMENT':
+      return state.map(b =>
+        b.id === action.blockId
+          ? { ...b, equipmentIds: [...new Set([...(b.equipmentIds ?? []), action.equipmentId])] }
+          : b,
+      );
+
+    case 'UNASSIGN_EQUIPMENT':
+      return state.map(b =>
+        b.id === action.blockId
+          ? { ...b, equipmentIds: (b.equipmentIds ?? []).filter(id => id !== action.equipmentId) }
+          : b,
+      );
+
     default:
       return state;
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EQUIPMENT TRAY  (draggable equipment chips shown below the toolbar)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const EquipmentTray = ({
+  equipment,
+  onDragStart,
+}: {
+  equipment: SchedulerEquipment[];
+  onDragStart: (e: React.DragEvent, id: number) => void;
+}) => (
+  <div
+    role="toolbar"
+    aria-label="Equipment palette — drag items onto job blocks"
+    className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 overflow-x-auto"
+    style={{ minHeight: 48 }}
+  >
+    <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Equipment:</span>
+    {equipment.length === 0 && (
+      <span className="text-xs text-slate-400 italic">No equipment loaded</span>
+    )}
+    {equipment.map(eq => (
+      <div
+        key={eq.id}
+        draggable
+        onDragStart={e => onDragStart(e, eq.id)}
+        title={eq.hourly_rate ? `$${eq.hourly_rate}/hr — drag to assign` : 'Drag to assign'}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white text-slate-700 text-xs font-medium cursor-grab select-none shrink-0 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70 transition-colors"
+        style={{ userSelect: 'none' }}
+      >
+        <Wrench className="w-3 h-3 shrink-0" />
+        {eq.name}
+        {eq.hourly_rate !== undefined && (
+          <span className="text-slate-400 font-normal">${eq.hourly_rate}/hr</span>
+        )}
+      </div>
+    ))}
+  </div>
+);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BLOCK EQUIPMENT MODAL  (view & manage equipment assigned to a specific block)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const BlockEquipmentModal = ({
+  block,
+  job,
+  crew,
+  equipmentList,
+  onAssign,
+  onUnassign,
+  onClose,
+}: {
+  block: ScheduleBlock;
+  job: JobOption | undefined;
+  crew: Crew | undefined;
+  equipmentList: SchedulerEquipment[];
+  onAssign: (equipmentId: number) => void;
+  onUnassign: (equipmentId: number) => void;
+  onClose: () => void;
+}) => {
+  const assigned  = block.equipmentIds ?? [];
+  const available = equipmentList.filter(eq => !assigned.includes(eq.id));
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="equip-modal-title"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col" style={{ maxHeight: '80vh' }}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
+          <div>
+            <h3 id="equip-modal-title" className="text-base font-bold text-slate-900">Equipment on Site</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {block.jobNumber}{job ? ` · ${job.location}` : ''}{crew ? ` · ${crew.name}` : ''}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 p-4 space-y-4">
+          {/* Assigned equipment */}
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              Assigned ({assigned.length})
+            </p>
+            {assigned.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No equipment assigned yet — drag from the tray or add below.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {assigned.map(id => {
+                  const eq = equipmentList.find(e => e.id === id);
+                  return (
+                    <li key={id} className="flex items-center justify-between rounded-lg bg-blue-50 px-3 py-2">
+                      <div className="flex items-center gap-2">
+                        <Wrench className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                        <span className="text-sm font-medium text-slate-800">{eq?.name ?? `Equipment #${id}`}</span>
+                        {eq?.hourly_rate !== undefined && (
+                          <span className="text-xs text-slate-400">${eq.hourly_rate}/hr</span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => onUnassign(id)}
+                        className="w-6 h-6 flex items-center justify-center rounded-full text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                        title="Remove"
+                        aria-label={`Remove ${eq?.name ?? `equipment ${id}`}`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Add more equipment */}
+          {available.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Add Equipment</p>
+              <ul className="space-y-1.5">
+                {available.map(eq => (
+                  <li key={eq.id}>
+                    <button
+                      onClick={() => onAssign(eq.id)}
+                      className="w-full flex items-center justify-between rounded-lg border border-slate-200 px-3 py-2 hover:border-blue-300 hover:bg-blue-50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Wrench className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="text-sm text-slate-700">{eq.name}</span>
+                        {eq.hourly_rate !== undefined && (
+                          <span className="text-xs text-slate-400">${eq.hourly_rate}/hr</span>
+                        )}
+                      </div>
+                      <Plus className="w-4 h-4 text-blue-500" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-slate-100">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-sm font-semibold hover:bg-slate-700 transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TOOLTIP
@@ -916,6 +1111,12 @@ interface JobBlockProps {
   isDragging: boolean;
   isAdmin?: boolean;
   onDelete?: () => void;
+  equipmentCount?: number;
+  isEquipDragOver?: boolean;
+  onEquipmentDrop?: (equipmentId: number) => void;
+  onEquipmentDragOver?: () => void;
+  onEquipmentDragLeave?: () => void;
+  onEquipmentClick?: () => void;
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
@@ -927,6 +1128,7 @@ interface JobBlockProps {
 const JobBlock = ({
   block, job, left, width, color, isDragging,
   isAdmin, onDelete,
+  equipmentCount, isEquipDragOver, onEquipmentDrop, onEquipmentDragOver, onEquipmentDragLeave, onEquipmentClick,
   onDragStart, onDragEnd, onContextMenu,
   onMouseEnter, onMouseMove, onMouseLeave,
 }: JobBlockProps) => {
@@ -944,6 +1146,28 @@ const JobBlock = ({
       onMouseEnter={onMouseEnter}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
+      onDragOver={e => {
+        if (e.dataTransfer.types.includes('application/x-equip-id')) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'copy';
+          onEquipmentDragOver?.();
+        }
+      }}
+      onDragLeave={e => {
+        if (e.dataTransfer.types.includes('application/x-equip-id')) {
+          onEquipmentDragLeave?.();
+        }
+      }}
+      onDrop={e => {
+        const equipId = e.dataTransfer.getData('application/x-equip-id');
+        if (equipId) {
+          e.stopPropagation();
+          e.preventDefault();
+          onEquipmentDrop?.(Number(equipId));
+          onEquipmentDragLeave?.();
+        }
+      }}
       style={{
         position: 'absolute',
         left: left + BLOCK_MARGIN,
@@ -964,8 +1188,10 @@ const JobBlock = ({
         justifyContent: 'center',
         padding: '0 8px',
         boxSizing: 'border-box',
-        boxShadow: isDragging ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
-        transition: 'opacity 0.12s',
+        boxShadow: isEquipDragOver
+          ? `0 0 0 2px #fff, 0 0 0 4px #3b82f6`
+          : isDragging ? 'none' : '0 2px 8px rgba(0,0,0,0.2)',
+        transition: 'opacity 0.12s, box-shadow 0.1s',
         zIndex: 5,
       }}
     >
@@ -1027,6 +1253,37 @@ const JobBlock = ({
         </button>
       )}
 
+      {/* Equipment badge — bottom-left; clickable to open equipment modal */}
+      {!isDelay && (equipmentCount ?? 0) > 0 && onEquipmentClick && (
+        <button
+          onClick={e => { e.stopPropagation(); e.preventDefault(); onEquipmentClick(); }}
+          onMouseDown={e => e.stopPropagation()}
+          title={`${equipmentCount} piece${equipmentCount !== 1 ? 's' : ''} of equipment on site — click to manage`}
+          aria-label={`${equipmentCount} equipment assigned — click to manage`}
+          style={{
+            position: 'absolute',
+            bottom: 3,
+            left: 4,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            background: 'rgba(0,0,0,0.35)',
+            border: 'none',
+            borderRadius: 4,
+            padding: '1px 4px',
+            cursor: 'pointer',
+            zIndex: 10,
+            color: '#fff',
+            fontSize: 9,
+            fontWeight: 700,
+            lineHeight: 1.4,
+          }}
+        >
+          <Wrench style={{ width: 8, height: 8, flexShrink: 0 }} aria-hidden="true" />
+          {equipmentCount}
+        </button>
+      )}
+
       {/* Label */}
       <div style={{ color: '#fff', fontSize: 11, fontWeight: 700, lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
         {block.jobNumber}
@@ -1069,7 +1326,8 @@ export default function Scheduler({
   const isAdmin = userRole === 'admin';
   const [crewsState, setCrewsState] = useState<Crew[]>(initialCrews);
   const [jobsState,  setJobsState]  = useState<JobOption[]>(initialJobs);
-  const [employeeList, setEmployeeList] = useState<SchedulerEmployee[]>([]);
+  const [employeeList,  setEmployeeList]  = useState<SchedulerEmployee[]>([]);
+  const [equipmentList, setEquipmentList] = useState<SchedulerEquipment[]>(MOCK_EQUIPMENT);
   const [blocks, dispatch] = useReducer(reducer, initialBlocks);
   const [view, setView]    = useState<'week' | 'month'>('week');
   const [viewOffset, setViewOffset] = useState(0); // days from default start
@@ -1085,6 +1343,20 @@ export default function Scheduler({
       .then(({ data, error }) => {
         if (error) console.error('[Scheduler] Failed to load employees:', error.message);
         else if (data) setEmployeeList(data as SchedulerEmployee[]);
+      });
+  }, [companyId]);
+
+  // Fetch equipment from Supabase when companyId is available
+  useEffect(() => {
+    if (!companyId) return;
+    supabase
+      .from('equipment')
+      .select('id, name, hourly_rate')
+      .eq('company_id', companyId)
+      .order('name')
+      .then(({ data, error }) => {
+        if (error) console.error('[Scheduler] Failed to load equipment:', error.message);
+        else if (data && data.length > 0) setEquipmentList(data as SchedulerEquipment[]);
       });
   }, [companyId]);
 
@@ -1113,6 +1385,11 @@ export default function Scheduler({
   const [showAddModal,      setShowAddModal]      = useState(false);
   const [showManageCrews,   setShowManageCrews]   = useState(false);
   const [showManageJobs,    setShowManageJobs]    = useState(false);
+
+  // Equipment tray & block-equipment modal
+  const [showEquipTray,    setShowEquipTray]    = useState(false);
+  const [equipModalBlockId, setEquipModalBlockId] = useState<string | null>(null);
+  const [equipDragOverBlockId, setEquipDragOverBlockId] = useState<string | null>(null);
 
   // Ref to the outer scroll container (needed for drop position calc)
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1163,6 +1440,18 @@ export default function Scheduler({
     dispatch({ type: 'MOVE_BLOCK', id: blockId, crewId, startDate: newStart });
     setDraggingId(null);
   }, [dayWidth, viewStart, dragOffsetDays]);
+
+  // ── Equipment drag handlers ──────────────────────────────────────────────────
+
+  const handleEquipDragStart = useCallback((e: React.DragEvent, equipmentId: number) => {
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-equip-id', String(equipmentId));
+  }, []);
+
+  const handleEquipDropOnBlock = useCallback((blockId: string, equipmentId: number) => {
+    dispatch({ type: 'ASSIGN_EQUIPMENT', blockId, equipmentId });
+    setEquipDragOverBlockId(null);
+  }, []);
 
   // ── Context-menu actions ─────────────────────────────────────────────────────
 
@@ -1261,6 +1550,18 @@ export default function Scheduler({
             </>
           )}
           <button
+            onClick={() => setShowEquipTray(t => !t)}
+            aria-pressed={showEquipTray}
+            aria-label="Toggle equipment tray"
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
+              showEquipTray
+                ? 'bg-amber-500 text-white border-amber-400'
+                : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'
+            }`}
+          >
+            <Wrench className="w-3.5 h-3.5" /> Equipment
+          </button>
+          <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors"
           >
@@ -1269,7 +1570,13 @@ export default function Scheduler({
         </div>
       </div>
 
-      {/* ─── Grid ─── */}
+      {/* ─── Equipment Tray ─── */}
+      {showEquipTray && (
+        <EquipmentTray
+          equipment={equipmentList}
+          onDragStart={handleEquipDragStart}
+        />
+      )}
       <div ref={scrollRef} className="flex-1 overflow-auto" style={{ minHeight: 0 }}>
         <div style={{ minWidth: CREW_COL_W + totalGridWidth }}>
 
@@ -1469,6 +1776,7 @@ export default function Scheduler({
                     const width = block.durationDays * dayWidth;
                     if (left + width < 0 || left > totalGridWidth) return null;
                     const job = jobsState.find(j => j.jobNumber === block.jobNumber);
+                    const eqCount = (block.equipmentIds ?? []).length;
                     return (
                       <JobBlock
                         key={block.id}
@@ -1481,6 +1789,12 @@ export default function Scheduler({
                         isDragging={draggingId === block.id}
                         isAdmin={isAdmin}
                         onDelete={() => dispatch({ type: 'DELETE_BLOCK', id: block.id })}
+                        equipmentCount={eqCount}
+                        isEquipDragOver={equipDragOverBlockId === block.id}
+                        onEquipmentDrop={equipId => handleEquipDropOnBlock(block.id, equipId)}
+                        onEquipmentDragOver={() => setEquipDragOverBlockId(block.id)}
+                        onEquipmentDragLeave={() => setEquipDragOverBlockId(null)}
+                        onEquipmentClick={() => setEquipModalBlockId(block.id)}
                         onDragStart={e => handleDragStart(e, block)}
                         onDragEnd={handleDragEnd}
                         onContextMenu={e => {
@@ -1554,6 +1868,24 @@ export default function Scheduler({
           onClose={() => setShowManageJobs(false)}
         />
       )}
+
+      {equipModalBlockId && (() => {
+        const eqBlock = blocks.find(b => b.id === equipModalBlockId);
+        if (!eqBlock) return null;
+        const eqJob  = jobsState.find(j => j.jobNumber === eqBlock.jobNumber);
+        const eqCrew = crewsState.find(c => c.id === eqBlock.crewId);
+        return (
+          <BlockEquipmentModal
+            block={eqBlock}
+            job={eqJob}
+            crew={eqCrew}
+            equipmentList={equipmentList}
+            onAssign={equipmentId => dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
+            onUnassign={equipmentId => dispatch({ type: 'UNASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
+            onClose={() => setEquipModalBlockId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
