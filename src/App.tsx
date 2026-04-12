@@ -35,6 +35,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Papa from 'papaparse';
 import readXlsxFile from 'read-excel-file/browser';
+import Scheduler from './Scheduler';
 
 // --- Components ---
 
@@ -338,8 +339,18 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
             <span className="font-medium">Jobs</span>
             {activeTab === 'jobs' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
           </button>
+          {(user.role === 'admin' || user.role === 'foreman') && (
+            <button
+              onClick={() => setActiveTab('scheduler')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'scheduler' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
+            >
+              <Calendar className="w-5 h-5" />
+              <span className="font-medium">Scheduler</span>
+              {activeTab === 'scheduler' && <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-6 bg-brand rounded-r-full" />}
+            </button>
+          )}
           {user.role === 'admin' && (
-            <button 
+            <button
               onClick={() => setActiveTab('users')}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all relative ${activeTab === 'users' ? 'bg-slate-800 text-white' : 'hover:text-white hover:bg-slate-800/50'}`}
             >
@@ -4187,6 +4198,7 @@ export default function App() {
         )
       )}
       {activeTab === 'users' && user.role === 'admin' && <UserManagement user={user} />}
+      {activeTab === 'scheduler' && (user.role === 'admin' || user.role === 'foreman') && <Scheduler userRole={user.role} companyId={user.company_id} />}
       {activeTab === 'settings' && (user.role === 'admin' || user.role === 'foreman') && <Settings user={user} />}
       {activeTab === 'super-admin' && user.role === 'super_admin' && <SuperAdminDashboard />}
     </Layout>
