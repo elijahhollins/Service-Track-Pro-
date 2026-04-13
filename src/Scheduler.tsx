@@ -1,5 +1,5 @@
 import React, { useState, useReducer, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users, Wrench } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users, Wrench, GripHorizontal } from 'lucide-react';
 import { supabase } from './supabase';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -146,7 +146,8 @@ type Action =
   | { type: 'DELETE_BLOCK';       id: string }
   | { type: 'REPLACE_ALL';        blocks: ScheduleBlock[] }
   | { type: 'ASSIGN_EQUIPMENT';   blockId: string; equipmentId: number }
-  | { type: 'UNASSIGN_EQUIPMENT'; blockId: string; equipmentId: number };
+  | { type: 'UNASSIGN_EQUIPMENT'; blockId: string; equipmentId: number }
+  | { type: 'SHIFT_CREW';         crewId: string; fromDate: string; days: number };
 
 /** Push all blocks for a crew that start on or after `fromDate` forward by `shiftDays`. */
 function shiftAfter(
@@ -223,6 +224,13 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
       return state.map(b =>
         b.id === action.blockId
           ? { ...b, equipmentIds: (b.equipmentIds ?? []).filter(id => id !== action.equipmentId) }
+          : b,
+      );
+
+    case 'SHIFT_CREW':
+      return state.map(b =>
+        b.crewId === action.crewId && b.startDate >= action.fromDate
+          ? { ...b, startDate: addDays(b.startDate, action.days) }
           : b,
       );
 
@@ -517,8 +525,8 @@ const CtxMenu = ({
 // ═══════════════════════════════════════════════════════════════════════════════
 
 interface DayPromptState {
-  action: 'delay' | 'extend';
-  blockId: string;
+  action: 'delay' | 'extend' | 'crew_delay';
+  blockId: string; // blockId for 'delay'/'extend'; crewId for 'crew_delay'
 }
 
 const DayPromptModal = ({
@@ -531,19 +539,27 @@ const DayPromptModal = ({
   onClose: () => void;
 }) => {
   const [days, setDays] = useState(1);
-  const isDelay = state.action === 'delay';
+  const isDelay     = state.action === 'delay';
+  const isCrewDelay = state.action === 'crew_delay';
+
+  const title = isCrewDelay ? 'Push Crew Schedule' : isDelay ? 'Insert Delay' : 'Extend Job';
+  const description = isCrewDelay
+    ? 'All current and upcoming blocks for this crew will shift forward by the specified number of days.'
+    : isDelay
+    ? 'A delay block will be inserted before this job. The job and all subsequent crew blocks will shift forward.'
+    : 'The job duration will increase and all subsequent crew blocks will shift forward automatically.';
+  const btnLabel = isCrewDelay ? 'Push Schedule' : isDelay ? 'Insert Delay' : 'Extend';
+  const btnClass = isCrewDelay
+    ? 'bg-orange-500 hover:bg-orange-600'
+    : isDelay
+    ? 'bg-blue-600 hover:bg-blue-700'
+    : 'bg-green-600 hover:bg-green-700';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-6">
-        <h3 className="text-base font-bold text-slate-900 mb-1">
-          {isDelay ? 'Insert Delay' : 'Extend Job'}
-        </h3>
-        <p className="text-xs text-slate-500 mb-4">
-          {isDelay
-            ? 'A delay block will be inserted before this job. The job and all subsequent crew blocks will shift forward.'
-            : 'The job duration will increase and all subsequent crew blocks will shift forward automatically.'}
-        </p>
+        <h3 className="text-base font-bold text-slate-900 mb-1">{title}</h3>
+        <p className="text-xs text-slate-500 mb-4">{description}</p>
         <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
           Number of Days
         </label>
@@ -565,11 +581,9 @@ const DayPromptModal = ({
           </button>
           <button
             onClick={() => { onConfirm(days); onClose(); }}
-            className={`flex-1 py-2 text-white rounded-xl text-sm font-semibold transition-colors ${
-              isDelay ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'
-            }`}
+            className={`flex-1 py-2 text-white rounded-xl text-sm font-semibold transition-colors ${btnClass}`}
           >
-            {isDelay ? 'Insert Delay' : 'Extend'}
+            {btnLabel}
           </button>
         </div>
       </div>
@@ -1114,6 +1128,7 @@ interface JobBlockProps {
   color: string;
   isDragging: boolean;
   isAdmin?: boolean;
+  editMode?: boolean;
   onDelete?: () => void;
   equipmentCount?: number;
   isEquipDragOver?: boolean;
@@ -1127,14 +1142,15 @@ interface JobBlockProps {
   onMouseEnter: (e: React.MouseEvent) => void;
   onMouseMove: (e: React.MouseEvent) => void;
   onMouseLeave: () => void;
+  onTouchStart?: (e: React.TouchEvent) => void;
 }
 
 const JobBlock = ({
   block, job, left, width, color, isDragging,
-  isAdmin, onDelete,
+  isAdmin, editMode, onDelete,
   equipmentCount, isEquipDragOver, onEquipmentDrop, onEquipmentDragOver, onEquipmentDragLeave, onEquipmentClick,
   onDragStart, onDragEnd, onContextMenu,
-  onMouseEnter, onMouseMove, onMouseLeave,
+  onMouseEnter, onMouseMove, onMouseLeave, onTouchStart,
 }: JobBlockProps) => {
   const isDelay   = block.type === 'delay';
   const bgColor   = isDelay ? '#6b7280' : color;
@@ -1143,13 +1159,14 @@ const JobBlock = ({
 
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+      draggable={editMode}
+      onDragStart={editMode ? onDragStart : undefined}
+      onDragEnd={editMode ? onDragEnd : undefined}
       onContextMenu={onContextMenu}
       onMouseEnter={onMouseEnter}
       onMouseMove={onMouseMove}
       onMouseLeave={onMouseLeave}
+      onTouchStart={editMode ? onTouchStart : undefined}
       onDragOver={e => {
         if (e.dataTransfer.types.includes('application/x-equip-id')) {
           e.preventDefault();
@@ -1184,8 +1201,9 @@ const JobBlock = ({
           : undefined,
         opacity: isDragging ? 0.35 : 1,
         borderRadius: 8,
-        cursor: 'grab',
+        cursor: editMode ? 'grab' : 'default',
         userSelect: 'none',
+        touchAction: editMode ? 'none' : 'auto',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
@@ -1222,6 +1240,20 @@ const JobBlock = ({
             borderColor: `transparent #fbbf24 transparent transparent`,
           }}
         />
+      )}
+
+      {/* Edit mode drag handle — visible on top-left of block in edit mode */}
+      {editMode && (
+        <div
+          style={{
+            position: 'absolute', top: 3, left: 3,
+            color: 'rgba(255,255,255,0.65)',
+            pointerEvents: 'none',
+            lineHeight: 1,
+          }}
+        >
+          <GripHorizontal style={{ width: 10, height: 10 }} />
+        </div>
       )}
 
       {/* Admin delete button — visible on block for mobile/touch accessibility */}
@@ -1517,6 +1549,21 @@ export default function Scheduler({
   const [draggingId,    setDraggingId]    = useState<string | null>(null);
   const [dragOffsetDays, setDragOffsetDays] = useState(0);
 
+  // Edit mode (gates drag on desktop and enables touch-drag on mobile)
+  const [editMode, setEditMode] = useState(false);
+
+  // Hovered crew delay button (for hover styling)
+  const [hoverDelayCrewId, setHoverDelayCrewId] = useState<string | null>(null);
+
+  // Touch-drag state (ref for values needed inside non-React event listeners)
+  const touchDragRef = useRef<{
+    blockId: string;
+    offsetDays: number;
+    label: string;
+    color: string;
+  } | null>(null);
+  const [touchGhostPos, setTouchGhostPos] = useState<{ x: number; y: number } | null>(null);
+
   // Overlay state
   const [ctxMenu,           setCtxMenu]           = useState<CtxMenuState | null>(null);
   const [dayPrompt,         setDayPrompt]         = useState<DayPromptState | null>(null);
@@ -1592,11 +1639,94 @@ export default function Scheduler({
     setEquipDragOverBlockId(null);
   }, []);
 
+  // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
+
+  const handleBlockTouchStart = useCallback((
+    e: React.TouchEvent,
+    block: ScheduleBlock,
+    color: string,
+  ) => {
+    if (!editMode) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const rect  = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const offsetDays = Math.max(0, Math.floor((touch.clientX - rect.left) / dayWidth));
+    touchDragRef.current = { blockId: block.id, offsetDays, label: block.jobNumber, color };
+    setDraggingId(block.id);
+    setTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+  }, [editMode, dayWidth]);
+
+  // Global touch-move / touch-end listeners while a touch drag is in progress
+  const crewsStateRef  = useRef(crewsState);
+  const dayWidthRef    = useRef(dayWidth);
+  const viewStartRef   = useRef(viewStart);
+  crewsStateRef.current  = crewsState;
+  dayWidthRef.current    = dayWidth;
+  viewStartRef.current   = viewStart;
+
+  useEffect(() => {
+    if (!touchGhostPos) return; // nothing being dragged
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!touchDragRef.current) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      setTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      const drag = touchDragRef.current;
+      if (!drag || !scrollRef.current) {
+        touchDragRef.current = null;
+        setDraggingId(null);
+        setTouchGhostPos(null);
+        return;
+      }
+
+      const touch = e.changedTouches[0];
+      const container = scrollRef.current;
+      const containerRect = container.getBoundingClientRect();
+
+      // Determine which crew row was released over
+      const yInView    = touch.clientY - containerRect.top;
+      const crewAreaTop = HEADER_MONTH_H + HEADER_DAY_H;
+      const crewIndex   = Math.floor((yInView - crewAreaTop) / ROW_HEIGHT);
+      const crews       = crewsStateRef.current;
+      const clampedIdx  = Math.min(Math.max(crewIndex, 0), crews.length - 1);
+      const targetCrew  = crews[clampedIdx];
+
+      // Determine which date column was released over
+      const dw = dayWidthRef.current;
+      const xInContent = touch.clientX - containerRect.left + container.scrollLeft;
+      const xInGrid    = xInContent - CREW_COL_W;
+      const dayIndex   = dw > 0 ? Math.floor(xInGrid / dw) : 0;
+      const newStart   = addDays(viewStartRef.current, dayIndex - drag.offsetDays);
+
+      if (targetCrew) {
+        dispatch({ type: 'MOVE_BLOCK', id: drag.blockId, crewId: targetCrew.id, startDate: newStart });
+      }
+      touchDragRef.current = null;
+      setDraggingId(null);
+      setTouchGhostPos(null);
+    };
+
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd);
+    return () => {
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
+    };
+  }, [touchGhostPos]);
+
   // ── Context-menu actions ─────────────────────────────────────────────────────
 
   const handleDelayConfirm = (days: number) => {
     if (!dayPrompt) return;
-    dispatch({ type: 'INSERT_DELAY', blockId: dayPrompt.blockId, days });
+    if (dayPrompt.action === 'crew_delay') {
+      dispatch({ type: 'SHIFT_CREW', crewId: dayPrompt.blockId, fromDate: todayISO, days });
+    } else {
+      dispatch({ type: 'INSERT_DELAY', blockId: dayPrompt.blockId, days });
+    }
   };
 
   const handleExtendConfirm = (days: number) => {
@@ -1672,6 +1802,20 @@ export default function Scheduler({
         </span>
 
         <div className="ml-auto flex items-center gap-2">
+          {/* Edit mode toggle */}
+          <button
+            onClick={() => setEditMode(m => !m)}
+            aria-pressed={editMode}
+            aria-label={editMode ? 'Exit edit mode' : 'Enter edit mode to drag blocks'}
+            title={editMode ? 'Exit edit mode' : 'Edit: drag blocks to reschedule'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
+              editMode
+                ? 'bg-yellow-400 text-slate-900 border-yellow-300'
+                : 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'
+            }`}
+          >
+            <Pencil className="w-3.5 h-3.5" /> {editMode ? 'Editing' : 'Edit'}
+          </button>
           {isAdmin && (
             <>
               <button
@@ -1832,12 +1976,12 @@ export default function Scheduler({
                     borderRight: '1px solid rgba(255,255,255,0.06)',
                     borderBottom: '1px solid rgba(255,255,255,0.04)',
                     display: 'flex', alignItems: 'center',
-                    padding: '0 12px', gap: 8,
+                    padding: '0 8px 0 12px', gap: 6,
                     flexShrink: 0,
                   }}
                 >
                   <div style={{ width: 4, height: 32, borderRadius: 2, backgroundColor: color, flexShrink: 0 }} />
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600, lineHeight: 1.2, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
                       {crew.name}
                     </div>
@@ -1865,6 +2009,28 @@ export default function Scheduler({
                       );
                     })()}
                   </div>
+                  {/* Per-crew delay button */}
+                  <button
+                    onClick={() => setDayPrompt({ action: 'crew_delay', blockId: crew.id })}
+                    onMouseEnter={() => setHoverDelayCrewId(crew.id)}
+                    onMouseLeave={() => setHoverDelayCrewId(null)}
+                    title={`Push ${crew.name}'s schedule forward`}
+                    aria-label={`Add delay to ${crew.name}'s schedule`}
+                    style={{
+                      flexShrink: 0,
+                      width: 22, height: 22,
+                      borderRadius: 6,
+                      background: hoverDelayCrewId === crew.id ? 'rgba(249,115,22,0.25)' : 'rgba(255,255,255,0.06)',
+                      border: '1px solid rgba(255,255,255,0.12)',
+                      cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: hoverDelayCrewId === crew.id ? '#fb923c' : '#94a3b8',
+                      padding: 0,
+                      transition: 'background 0.15s, color 0.15s',
+                    }}
+                  >
+                    <Clock style={{ width: 11, height: 11 }} />
+                  </button>
                 </div>
 
                 {/* Drop-zone row */}
@@ -1875,8 +2041,8 @@ export default function Scheduler({
                     background: ci % 2 === 0 ? '#f8fafc' : '#f1f5f9',
                     borderBottom: '1px solid #e2e8f0',
                   }}
-                  onDragOver={handleDragOver}
-                  onDrop={e => handleDrop(e, crew.id)}
+                  onDragOver={editMode ? handleDragOver : undefined}
+                  onDrop={editMode ? e => handleDrop(e, crew.id) : undefined}
                 >
                   {/* Day cells (grid lines + weekend shading) */}
                   {days.map((day, i) => {
@@ -1927,6 +2093,7 @@ export default function Scheduler({
                         color={color}
                         isDragging={draggingId === block.id}
                         isAdmin={isAdmin}
+                        editMode={editMode}
                         onDelete={() => dispatch({ type: 'DELETE_BLOCK', id: block.id })}
                         equipmentCount={eqCount}
                         isEquipDragOver={equipDragOverBlockId === block.id}
@@ -1936,6 +2103,7 @@ export default function Scheduler({
                         onEquipmentClick={() => setEquipModalBlockId(block.id)}
                         onDragStart={e => handleDragStart(e, block)}
                         onDragEnd={handleDragEnd}
+                        onTouchStart={e => handleBlockTouchStart(e, block, color)}
                         onContextMenu={e => {
                           e.preventDefault();
                           setCtxMenu({ blockId: block.id, blockType: block.type, x: e.clientX, y: e.clientY });
@@ -1964,6 +2132,34 @@ export default function Scheduler({
       {/* ─── Overlays ─── */}
       {tooltip && <BlockTooltip tip={tooltip} />}
 
+      {/* Touch drag ghost */}
+      {touchGhostPos && touchDragRef.current && (
+        <div
+          aria-hidden="true"
+          style={{
+            position: 'fixed',
+            left: touchGhostPos.x - 24,
+            top:  touchGhostPos.y - 20,
+            background: touchDragRef.current.color,
+            color: '#fff',
+            borderRadius: 8,
+            padding: '5px 10px',
+            fontSize: 12,
+            fontWeight: 700,
+            pointerEvents: 'none',
+            zIndex: 9999,
+            opacity: 0.9,
+            boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+            whiteSpace: 'nowrap',
+            maxWidth: 160,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}
+        >
+          {touchDragRef.current.label}
+        </div>
+      )}
+
       {ctxMenu && (
         <CtxMenu
           menu={ctxMenu}
@@ -1977,7 +2173,11 @@ export default function Scheduler({
       {dayPrompt && (
         <DayPromptModal
           state={dayPrompt}
-          onConfirm={dayPrompt.action === 'delay' ? handleDelayConfirm : handleExtendConfirm}
+          onConfirm={
+            dayPrompt.action === 'extend'
+              ? handleExtendConfirm
+              : handleDelayConfirm
+          }
           onClose={() => setDayPrompt(null)}
         />
       )}
