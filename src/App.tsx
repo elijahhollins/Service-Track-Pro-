@@ -783,7 +783,7 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
             <div className="flex items-center gap-2">
               <GripHorizontal className="w-4 h-4 text-slate-400" />
               <span className="text-sm font-semibold text-slate-700">Equipment — drag onto a job to log hours</span>
-              <span className="text-xs text-slate-400 hidden sm:inline">({equipment.length} item{equipment.length !== 1 ? 's' : ''})</span>
+              <span className="text-xs text-slate-400 sr-only sm:not-sr-only">({equipment.length} item{equipment.length !== 1 ? 's' : ''})</span>
             </div>
             <ChevronDown
               className={`w-4 h-4 text-slate-400 transition-transform ${showEquipTray ? '' : '-rotate-90'}`}
@@ -853,7 +853,6 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
                 {/* Drop-zone overlay visible only while dragging */}
                 {dragEquipId !== null && (
                   <div
-                    data-job-id={job.id}
                     className={`absolute inset-0 rounded-[inherit] z-10 flex items-center justify-center pointer-events-none transition-all ${
                       isDropTarget ? 'bg-brand/10' : 'bg-transparent'
                     }`}
@@ -867,7 +866,7 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
                   </div>
                 )}
 
-                <div className="p-6" data-job-id={job.id}>
+                <div className="p-6">
                   <div className="flex justify-between items-start mb-4">
                     <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
                       {job.status}
