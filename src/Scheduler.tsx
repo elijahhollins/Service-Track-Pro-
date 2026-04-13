@@ -872,7 +872,7 @@ const ManageJobsModal = ({
       return;
     }
     setDupError('');
-    setLocal(prev => prev.map(j => j.jobNumber === editingNum ? { ...editJob, jobNumber: newNum, location: editJob.location.trim(), estimatedDays: Math.max(1, editJob.estimatedDays) } : j));
+    setLocal(prev => prev.map(j => j.jobNumber === editingNum ? { ...editJob, jobNumber: newNum, location: editJob.location.trim() } : j));
     setEditNum(null);
   };
   const deleteJob = (num: string) => setLocal(prev => prev.filter(j => j.jobNumber !== num));
@@ -880,7 +880,7 @@ const ManageJobsModal = ({
     if (!newJob.jobNumber.trim() || !newJob.location.trim()) return;
     if (local.some(j => j.jobNumber === newJob.jobNumber.trim())) { setDupError('Job number already exists'); return; }
     setDupError('');
-    setLocal(prev => [...prev, { jobNumber: newJob.jobNumber.trim(), location: newJob.location.trim(), estimatedDays: Math.max(1, newJob.estimatedDays) }]);
+    setLocal(prev => [...prev, { jobNumber: newJob.jobNumber.trim(), location: newJob.location.trim(), estimatedDays: 1 }]);
     setNewJob(blank);
   };
 
@@ -917,13 +917,6 @@ const ManageJobsModal = ({
                       className="flex-1 border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
                       placeholder="Location"
                     />
-                    <input
-                      type="number" min={1} max={365}
-                      value={editJob.estimatedDays}
-                      onChange={e => setEditJob(p => ({ ...p, estimatedDays: parseInt(e.target.value) || 1 }))}
-                      className="w-14 border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      placeholder="Days"
-                    />
                   </div>
                   <div className="flex gap-2">
                     <button onClick={saveEdit} className="flex-1 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">Save</button>
@@ -937,7 +930,6 @@ const ManageJobsModal = ({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{j.jobNumber}</span>
-                    <span className="text-xs text-slate-400">{j.estimatedDays}d</span>
                   </div>
                   <div className="text-sm text-slate-700 truncate mt-0.5">{j.location}</div>
                 </div>
@@ -964,13 +956,6 @@ const ManageJobsModal = ({
               onKeyDown={e => e.key === 'Enter' && addJob()}
               className="flex-1 border border-slate-200 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0"
               placeholder="Location"
-            />
-            <input
-              type="number" min={1} max={365}
-              value={newJob.estimatedDays}
-              onChange={e => setNewJob(p => ({ ...p, estimatedDays: parseInt(e.target.value) || 1 }))}
-              className="w-14 border border-slate-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400"
-              placeholder="Days"
             />
             <button
               onClick={addJob}
@@ -1007,9 +992,10 @@ const AddBlockModal = ({
   onAdd: (block: ScheduleBlock) => void;
   onClose: () => void;
 }) => {
-  const [crewId, setCrewId]   = useState(crews[0]?.id ?? '');
-  const [jobNum, setJobNum]   = useState(jobs[0]?.jobNumber ?? '');
-  const [startDate, setStart] = useState(todayISO);
+  const [crewId,       setCrewId]   = useState(crews[0]?.id ?? '');
+  const [jobNum,       setJobNum]   = useState(jobs[0]?.jobNumber ?? '');
+  const [startDate,    setStart]    = useState(todayISO);
+  const [durationDays, setDuration] = useState(5);
 
   const selectedJob = jobs.find(j => j.jobNumber === jobNum);
 
@@ -1021,7 +1007,7 @@ const AddBlockModal = ({
       crewId,
       jobNumber: jobNum,
       startDate,
-      durationDays: selectedJob.estimatedDays,
+      durationDays: Math.max(1, durationDays),
       type: 'job',
       extended: false,
     });
@@ -1066,29 +1052,44 @@ const AddBlockModal = ({
             >
               {jobs.map(j => (
                 <option key={j.jobNumber} value={j.jobNumber}>
-                  {j.jobNumber} — {j.location} ({j.estimatedDays}d)
+                  {j.jobNumber} — {j.location}
                 </option>
               ))}
             </select>
           </div>
 
-          <div>
-            <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
-              Start Date
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={e => setStart(e.target.value)}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              required
-            />
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStart(e.target.value)}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
+
+            <div style={{ width: 90 }}>
+              <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
+                Duration (days)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={365}
+                value={durationDays}
+                onChange={e => setDuration(Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                required
+              />
+            </div>
           </div>
 
           {selectedJob && (
             <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2">
-              Duration: <span className="font-semibold text-slate-700">{selectedJob.estimatedDays} days</span>
-              &nbsp;&middot;&nbsp;
               Location: <span className="font-semibold text-slate-700">{selectedJob.location}</span>
             </p>
           )}
