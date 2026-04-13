@@ -246,15 +246,19 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
 const EquipmentTray = ({
   equipment,
   onDragStart,
+  onPointerDown,
+  activeId,
 }: {
   equipment: SchedulerEquipment[];
   onDragStart: (e: React.DragEvent, id: number) => void;
+  onPointerDown?: (e: React.PointerEvent, id: number) => void;
+  activeId?: number | null;
 }) => (
   <div
     role="toolbar"
     aria-label="Equipment palette — drag items onto job blocks"
     className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 overflow-x-auto"
-    style={{ minHeight: 48 }}
+    style={{ minHeight: 48, touchAction: 'none' }}
   >
     <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Equipment:</span>
     {equipment.length === 0 && (
@@ -265,9 +269,14 @@ const EquipmentTray = ({
         key={eq.id}
         draggable
         onDragStart={e => onDragStart(e, eq.id)}
+        onPointerDown={onPointerDown ? e => onPointerDown(e, eq.id) : undefined}
         title={eq.hourly_rate ? `$${eq.hourly_rate}/hr — drag to assign` : 'Drag to assign'}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white text-slate-700 text-xs font-medium cursor-grab select-none shrink-0 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70 transition-colors"
-        style={{ userSelect: 'none' }}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium cursor-grab select-none shrink-0 transition-colors ${
+          activeId === eq.id
+            ? 'border-blue-400 bg-blue-50 text-blue-700 opacity-60'
+            : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70'
+        }`}
+        style={{ userSelect: 'none', touchAction: 'none' }}
       >
         <Wrench className="w-3 h-3 shrink-0" />
         {eq.name}
@@ -1160,6 +1169,7 @@ const JobBlock = ({
 
   return (
     <div
+      data-block-id={block.id}
       draggable={editMode}
       onDragStart={editMode ? onDragStart : undefined}
       onDragEnd={editMode ? onDragEnd : undefined}
@@ -1640,6 +1650,56 @@ export default function Scheduler({
     setEquipDragOverBlockId(null);
   }, []);
 
+  // ── Equipment pointer-drag (mobile touch support) ────────────────────────────
+  // Uses Pointer Events instead of HTML5 drag so it works on touchscreens too.
+
+  const equipPointerRef = useRef<number | null>(null); // equipment id being dragged
+  const [equipPointerGhost, setEquipPointerGhost] = useState<{ x: number; y: number } | null>(null);
+  const [equipPointerActiveId, setEquipPointerActiveId] = useState<number | null>(null);
+  const [equipPointerOverBlockId, setEquipPointerOverBlockId] = useState<string | null>(null);
+
+  const handleEquipPointerDown = useCallback((e: React.PointerEvent, equipmentId: number) => {
+    // Only activate on touch; mouse users keep the existing HTML5 drag
+    if (e.pointerType === 'mouse') return;
+    e.preventDefault();
+    equipPointerRef.current = equipmentId;
+    setEquipPointerActiveId(equipmentId);
+    setEquipPointerGhost({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  useEffect(() => {
+    if (!equipPointerGhost) return;
+
+    const onMove = (e: PointerEvent) => {
+      setEquipPointerGhost({ x: e.clientX, y: e.clientY });
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId);
+      setEquipPointerOverBlockId(blockEl ? (blockEl as HTMLElement).dataset.blockId! : null);
+      setEquipDragOverBlockId(blockEl ? (blockEl as HTMLElement).dataset.blockId! : null);
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const els = document.elementsFromPoint(e.clientX, e.clientY);
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId);
+      if (blockEl && equipPointerRef.current !== null) {
+        const targetBlockId = (blockEl as HTMLElement).dataset.blockId!;
+        dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipPointerRef.current });
+      }
+      equipPointerRef.current = null;
+      setEquipPointerActiveId(null);
+      setEquipPointerGhost(null);
+      setEquipPointerOverBlockId(null);
+      setEquipDragOverBlockId(null);
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [equipPointerGhost]);
+
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
   const handleBlockTouchStart = useCallback((
@@ -1859,6 +1919,8 @@ export default function Scheduler({
         <EquipmentTray
           equipment={equipmentList}
           onDragStart={handleEquipDragStart}
+          onPointerDown={handleEquipPointerDown}
+          activeId={equipPointerActiveId}
         />
       )}
       <div ref={scrollRef} className="flex-1 overflow-auto" style={{ minHeight: 0 }}>
@@ -2160,6 +2222,40 @@ export default function Scheduler({
           {touchDragRef.current.label}
         </div>
       )}
+
+      {/* Equipment pointer-drag ghost (mobile touch) */}
+      {equipPointerGhost && equipPointerActiveId !== null && (() => {
+        const eq = equipmentList.find(e => e.id === equipPointerActiveId);
+        const onBlock = equipPointerOverBlockId !== null;
+        return (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'fixed',
+              left: equipPointerGhost.x + 14,
+              top:  equipPointerGhost.y + 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: onBlock ? '#2563eb' : '#1e293b',
+              color: '#fff',
+              borderRadius: 999,
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              pointerEvents: 'none',
+              zIndex: 9999,
+              boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+              whiteSpace: 'nowrap',
+              transform: 'rotate(3deg)',
+              transition: 'background 0.1s',
+            }}
+          >
+            <Wrench style={{ width: 12, height: 12, flexShrink: 0 }} />
+            {eq?.name ?? 'Equipment'}
+          </div>
+        );
+      })()}
 
       {ctxMenu && (
         <CtxMenu

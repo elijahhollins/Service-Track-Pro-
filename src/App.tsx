@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Briefcase, 
   Calendar, 
@@ -26,9 +26,7 @@ import {
   ExternalLink,
   Upload,
   Pencil,
-  AlertCircle,
-  Wrench,
-  GripHorizontal,
+  AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Job, Employee, Equipment, Material, WorkLog, Template, WorkLogEntry, User, Invitation, Invoice, InvoiceSettings } from './types';
@@ -409,139 +407,6 @@ const Layout = ({ children, activeTab, setActiveTab, user, onLogout }: { childre
   );
 };
 
-// ─── Quick Equipment Log Modal ────────────────────────────────────────────────
-// Shown when equipment is drag-dropped onto a job card.  Lets the user confirm
-// hours and optionally change the date, then saves/appends a work-log entry.
-const QuickEquipmentLogModal = ({
-  equipment,
-  job,
-  onClose,
-  onSaved,
-}: {
-  equipment: Equipment;
-  job: Job;
-  onClose: () => void;
-  onSaved: () => void;
-}) => {
-  const [hours, setHours] = useState(8);
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleSave = async () => {
-    if (!hours || hours <= 0) return;
-    setIsSaving(true);
-    try {
-      const newEntry = { equipmentId: equipment.id, hours, rate: equipment.hourly_rate };
-      // Try to find an existing log for this date so we append rather than duplicate
-      const { data: existing } = await supabase
-        .from('work_logs')
-        .select('*')
-        .eq('job_id', job.id)
-        .eq('date', date)
-        .maybeSingle();
-
-      if (existing) {
-        const updatedEquipment = [...(existing.data?.equipment ?? []), newEntry];
-        await supabase
-          .from('work_logs')
-          .update({ data: { ...existing.data, equipment: updatedEquipment } })
-          .eq('id', existing.id);
-      } else {
-        const logData: WorkLogEntry = { employees: [], equipment: [newEntry], materials: [] };
-        await supabase.from('work_logs').insert([{ job_id: job.id, date, notes: '', data: logData }]);
-      }
-      onSaved();
-    } catch {
-      alert('Failed to save equipment log. Please try again.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-        className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div>
-            <h3 className="text-base font-bold text-slate-900">Log Equipment</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              <span className="font-semibold text-slate-700">{equipment.name}</span>
-              {' → '}
-              <span className="font-semibold text-slate-700 truncate">{job.job_name}</span>
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          {/* Equipment badge */}
-          <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
-            <Truck className="w-5 h-5 text-blue-500 shrink-0" />
-            <div>
-              <p className="text-sm font-bold text-slate-900">{equipment.name}</p>
-              <p className="text-xs text-slate-500">${equipment.hourly_rate}/hr</p>
-            </div>
-          </div>
-
-          {/* Date */}
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Date</label>
-            <input
-              type="date"
-              className="input-field"
-              value={date}
-              onChange={e => setDate(e.target.value)}
-            />
-          </div>
-
-          {/* Hours */}
-          <div>
-            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block">Hours</label>
-            <input
-              type="number"
-              min="0.5"
-              step="0.5"
-              className="input-field font-mono text-center text-lg"
-              value={hours}
-              onChange={e => setHours(Number(e.target.value))}
-            />
-          </div>
-
-          {/* Total */}
-          <div className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-            <span className="text-sm text-slate-600">Estimated Total</span>
-            <span className="font-bold font-mono text-slate-900">${(hours * equipment.hourly_rate).toFixed(2)}</span>
-          </div>
-        </div>
-
-        <div className="px-5 pb-5 flex gap-3">
-          <button onClick={onClose} className="btn-secondary flex-1 py-2.5">Cancel</button>
-          <button
-            onClick={handleSave}
-            disabled={isSaving || hours <= 0}
-            className="btn-primary flex-1 py-2.5 disabled:opacity-50"
-          >
-            {isSaving ? 'Saving…' : 'Log Equipment'}
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
-
-// ─── Dashboard ────────────────────────────────────────────────────────────────
-
 const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (id: number) => void, user: User, onNavigateToSettings: () => void }) => {
   const getInitialJob = (): Partial<Job> => ({
     customer_name: '',
@@ -562,19 +427,6 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
   const [foremen, setForemen] = useState<User[]>([]);
   const [newJob, setNewJob] = useState<Partial<Job>>(getInitialJob());
   const [unpricedMaterialCount, setUnpricedMaterialCount] = useState(0);
-
-  // ── Equipment drag-and-drop state ───────────────────────────────────────────
-  const [equipment, setEquipment] = useState<Equipment[]>([]);
-  const [showEquipTray, setShowEquipTray] = useState(true);
-  // Which equipment chip is currently being dragged
-  const dragEquipRef = useRef<number | null>(null);
-  const [dragEquipId, setDragEquipId] = useState<number | null>(null);
-  // Ghost element position (null = not dragging)
-  const [ghostPos, setGhostPos] = useState<{ x: number; y: number } | null>(null);
-  // Which job card the pointer is currently hovering over
-  const [dragOverJobId, setDragOverJobId] = useState<number | null>(null);
-  // Pending drop — opens the confirm modal
-  const [quickLog, setQuickLog] = useState<{ equipId: number; jobId: number } | null>(null);
 
   useEffect(() => {
     const fetchJobs = async () => {
@@ -611,52 +463,7 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
       fetchForemen();
       fetchUnpricedMaterials();
     }
-
-    // Fetch equipment for the drag tray
-    supabase.from('equipment').select('*').eq('company_id', user.company_id)
-      .then(({ data }) => { if (data) setEquipment(data); });
   }, [user]);
-
-  // ── Pointer-event drag handlers (desktop + mobile) ──────────────────────────
-
-  const handleEquipPointerDown = useCallback((e: React.PointerEvent, equipId: number) => {
-    e.preventDefault();
-    dragEquipRef.current = equipId;
-    setDragEquipId(equipId);
-    setGhostPos({ x: e.clientX, y: e.clientY });
-  }, []);
-
-  // Attach global pointermove / pointerup only while a drag is in progress
-  useEffect(() => {
-    if (!ghostPos) return;
-
-    const onMove = (e: PointerEvent) => {
-      setGhostPos({ x: e.clientX, y: e.clientY });
-      // Detect which job card (if any) the pointer is over
-      const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const jobEl = els.find(el => (el as HTMLElement).dataset?.jobId);
-      setDragOverJobId(jobEl ? Number((jobEl as HTMLElement).dataset.jobId) : null);
-    };
-
-    const onUp = (e: PointerEvent) => {
-      const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const jobEl = els.find(el => (el as HTMLElement).dataset?.jobId);
-      if (jobEl && dragEquipRef.current !== null) {
-        setQuickLog({ equipId: dragEquipRef.current, jobId: Number((jobEl as HTMLElement).dataset.jobId) });
-      }
-      dragEquipRef.current = null;
-      setDragEquipId(null);
-      setGhostPos(null);
-      setDragOverJobId(null);
-    };
-
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-    };
-  }, [ghostPos]);
 
   const [isCreating, setIsCreating] = useState(false);
 
@@ -771,58 +578,6 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
         </div>
       )}
 
-      {/* ── Equipment Drag Tray ─────────────────────────────────────────────── */}
-      {equipment.length > 0 && (
-        <div className="mb-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-          {/* Toggle header */}
-          <button
-            type="button"
-            onClick={() => setShowEquipTray(v => !v)}
-            className="w-full flex items-center justify-between px-5 py-3 hover:bg-slate-50 transition-colors"
-          >
-            <div className="flex items-center gap-2">
-              <GripHorizontal className="w-4 h-4 text-slate-400" />
-              <span className="text-sm font-semibold text-slate-700">Equipment — drag onto a job to log hours</span>
-              <span className="text-xs text-slate-400 sr-only sm:not-sr-only">({equipment.length} item{equipment.length !== 1 ? 's' : ''})</span>
-            </div>
-            <ChevronDown
-              className={`w-4 h-4 text-slate-400 transition-transform ${showEquipTray ? '' : '-rotate-90'}`}
-            />
-          </button>
-
-          {/* Chips */}
-          {showEquipTray && (
-            <div
-              className="flex flex-wrap gap-2 px-5 py-3 border-t border-slate-100 bg-slate-50"
-              style={{ touchAction: 'none' }}
-            >
-              {equipment.map(eq => (
-                <div
-                  key={eq.id}
-                  onPointerDown={e => handleEquipPointerDown(e, eq.id)}
-                  title={eq.hourly_rate ? `$${eq.hourly_rate}/hr — drag onto a job` : 'Drag onto a job'}
-                  className={`flex items-center gap-1.5 px-3 py-2 rounded-full border text-xs font-medium select-none cursor-grab active:cursor-grabbing transition-colors ${
-                    dragEquipId === eq.id
-                      ? 'border-brand bg-brand/10 text-brand opacity-60'
-                      : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50'
-                  }`}
-                  style={{ touchAction: 'none', userSelect: 'none' }}
-                >
-                  <Wrench className="w-3 h-3 shrink-0" />
-                  <span>{eq.name}</span>
-                  {eq.hourly_rate > 0 && (
-                    <span className="text-slate-400 font-normal">${eq.hourly_rate}/hr</span>
-                  )}
-                </div>
-              ))}
-              <p className="w-full text-[10px] text-slate-400 mt-1 sm:hidden">
-                Tap and hold an equipment chip, then drag it onto a job card below.
-              </p>
-            </div>
-          )}
-        </div>
-      )}
-
       {filteredJobs.length === 0 ? (
         <div className="p-20 border-2 border-dashed border-slate-200 rounded-3xl text-center">
           <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -834,112 +589,48 @@ const Dashboard = ({ onSelectJob, user, onNavigateToSettings }: { onSelectJob: (
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredJobs.map(job => {
-            const isDropTarget = dragEquipId !== null && dragOverJobId === job.id;
-            return (
-              <motion.div
-                key={job.id}
-                data-job-id={job.id}
-                whileHover={{ y: dragEquipId ? 0 : -4 }}
-                className={`card cursor-pointer group relative transition-all ${
-                  isDropTarget
-                    ? 'ring-2 ring-brand shadow-lg shadow-brand/20 scale-[1.02]'
-                    : dragEquipId
-                    ? 'ring-1 ring-slate-200 opacity-90'
-                    : ''
-                }`}
-                onClick={() => { if (!dragEquipId) onSelectJob(job.id!); }}
-              >
-                {/* Drop-zone overlay visible only while dragging */}
-                {dragEquipId !== null && (
-                  <div
-                    className={`absolute inset-0 rounded-[inherit] z-10 flex items-center justify-center pointer-events-none transition-all ${
-                      isDropTarget ? 'bg-brand/10' : 'bg-transparent'
-                    }`}
-                  >
-                    {isDropTarget && (
-                      <div className="flex items-center gap-2 bg-brand text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg">
-                        <Truck className="w-4 h-4" />
-                        Drop to log equipment
-                      </div>
+          {filteredJobs.map(job => (
+            <motion.div 
+              key={job.id}
+              whileHover={{ y: -4 }}
+              className="card cursor-pointer group"
+              onClick={() => onSelectJob(job.id!)}
+            >
+              <div className="p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
+                    {job.status}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
+                    {user.role === 'admin' && (
+                      <button 
+                        onClick={(e) => handleDeleteJob(e, job.id!)}
+                        className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                        title="Delete Job"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     )}
                   </div>
-                )}
-
-                <div className="p-6">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="px-2 py-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-wider rounded border border-emerald-100">
-                      {job.status}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-slate-400 font-mono">#{job.job_number}</span>
-                      {user.role === 'admin' && !dragEquipId && (
-                        <button
-                          onClick={(e) => handleDeleteJob(e, job.id!)}
-                          className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"
-                          title="Delete Job"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 group-hover:text-brand transition-colors">{job.job_name}</h3>
+                <p className="text-slate-500 text-sm mt-1">{job.customer_name}</p>
+                
+                <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <Calendar className="w-4 h-4" />
+                    <span className="text-xs">{job.start_date || 'No date'}</span>
                   </div>
-                  <h3 className="text-xl font-bold text-slate-900 group-hover:text-brand transition-colors">{job.job_name}</h3>
-                  <p className="text-slate-500 text-sm mt-1">{job.customer_name}</p>
-
-                  <div className="mt-6 pt-6 border-t border-slate-100 flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-slate-400">
-                      <Calendar className="w-4 h-4" />
-                      <span className="text-xs">{job.start_date || 'No date'}</span>
-                    </div>
-                    <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-all">
-                      <ChevronRight className="w-5 h-5" />
-                    </div>
+                  <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-brand group-hover:text-white transition-all">
+                    <ChevronRight className="w-5 h-5" />
                   </div>
                 </div>
-              </motion.div>
-            );
-          })}
+              </div>
+            </motion.div>
+          ))}
         </div>
       )}
-
-      {/* Drag ghost element — follows the pointer, pointer-events:none so it doesn't block hit-testing */}
-      {ghostPos && dragEquipId !== null && (() => {
-        const eq = equipment.find(e => e.id === dragEquipId);
-        return (
-          <div
-            style={{
-              position: 'fixed',
-              left: ghostPos.x + 12,
-              top: ghostPos.y + 12,
-              pointerEvents: 'none',
-              zIndex: 9999,
-              transform: 'rotate(3deg)',
-            }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-full border border-brand bg-brand text-white text-xs font-bold shadow-xl"
-          >
-            <Wrench className="w-3 h-3 shrink-0" />
-            {eq?.name ?? 'Equipment'}
-          </div>
-        );
-      })()}
-
-      {/* Quick log confirm modal */}
-      <AnimatePresence>
-        {quickLog && (() => {
-          const eq = equipment.find(e => e.id === quickLog.equipId);
-          const job = jobs.find(j => j.id === quickLog.jobId);
-          if (!eq || !job) return null;
-          return (
-            <QuickEquipmentLogModal
-              equipment={eq}
-              job={job}
-              onClose={() => setQuickLog(null)}
-              onSaved={() => setQuickLog(null)}
-            />
-          );
-        })()}
-      </AnimatePresence>
 
       <AnimatePresence>
         {isAdding && (
