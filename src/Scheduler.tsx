@@ -1673,16 +1673,17 @@ export default function Scheduler({
     const onMove = (e: PointerEvent) => {
       setEquipPointerGhost({ x: e.clientX, y: e.clientY });
       const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId);
-      setEquipPointerOverBlockId(blockEl ? (blockEl as HTMLElement).dataset.blockId! : null);
-      setEquipDragOverBlockId(blockEl ? (blockEl as HTMLElement).dataset.blockId! : null);
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
+      const blockId = blockEl?.dataset.blockId ?? null;
+      setEquipPointerOverBlockId(blockId);
+      setEquipDragOverBlockId(blockId);
     };
 
     const onUp = (e: PointerEvent) => {
       const els = document.elementsFromPoint(e.clientX, e.clientY);
-      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId);
-      if (blockEl && equipPointerRef.current !== null) {
-        const targetBlockId = (blockEl as HTMLElement).dataset.blockId!;
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
+      const targetBlockId = blockEl?.dataset.blockId;
+      if (targetBlockId && equipPointerRef.current !== null) {
         dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipPointerRef.current });
       }
       equipPointerRef.current = null;
@@ -1698,7 +1699,7 @@ export default function Scheduler({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [equipPointerGhost]);
+  }, [equipPointerGhost, dispatch]);
 
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
