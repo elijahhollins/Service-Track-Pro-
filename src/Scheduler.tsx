@@ -246,19 +246,21 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
 const EquipmentTray = ({
   equipment,
   onDragStart,
-  onPointerDown,
-  activeId,
+  onTouchStart,
+  activeTouchId,
+  editMode,
 }: {
   equipment: SchedulerEquipment[];
   onDragStart: (e: React.DragEvent, id: number) => void;
-  onPointerDown?: (e: React.PointerEvent, id: number) => void;
-  activeId?: number | null;
+  onTouchStart?: (e: React.TouchEvent, id: number) => void;
+  activeTouchId?: number | null;
+  editMode?: boolean;
 }) => (
   <div
     role="toolbar"
     aria-label="Equipment palette — drag items onto job blocks"
     className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 overflow-x-auto"
-    style={{ minHeight: 48, touchAction: 'none' }}
+    style={{ minHeight: 48, touchAction: editMode ? 'none' : 'auto' }}
   >
     <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Equipment:</span>
     {equipment.length === 0 && (
@@ -269,14 +271,14 @@ const EquipmentTray = ({
         key={eq.id}
         draggable
         onDragStart={e => onDragStart(e, eq.id)}
-        onPointerDown={onPointerDown ? e => onPointerDown(e, eq.id) : undefined}
+        onTouchStart={onTouchStart ? e => onTouchStart(e, eq.id) : undefined}
         title={eq.hourly_rate ? `$${eq.hourly_rate}/hr — drag to assign` : 'Drag to assign'}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium cursor-grab select-none shrink-0 transition-colors ${
-          activeId === eq.id
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium select-none shrink-0 transition-colors ${
+          activeTouchId === eq.id
             ? 'border-blue-400 bg-blue-50 text-blue-700 opacity-60'
             : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70'
-        }`}
-        style={{ userSelect: 'none', touchAction: 'none' }}
+        } ${editMode ? 'cursor-grab' : 'cursor-default'}`}
+        style={{ userSelect: 'none', touchAction: editMode ? 'none' : 'auto' }}
       >
         <Wrench className="w-3 h-3 shrink-0" />
         {eq.name}
@@ -285,6 +287,9 @@ const EquipmentTray = ({
         )}
       </div>
     ))}
+    {editMode === false && (
+      <span className="text-xs text-slate-400 italic ml-1 shrink-0">Enter Edit mode to drag on mobile</span>
+    )}
   </div>
 );
 
@@ -1650,56 +1655,57 @@ export default function Scheduler({
     setEquipDragOverBlockId(null);
   }, []);
 
-  // ── Equipment pointer-drag (mobile touch support) ────────────────────────────
-  // Uses Pointer Events instead of HTML5 drag so it works on touchscreens too.
+  // ── Equipment touch-drag (mobile — mirrors job-block touch-drag) ────────────
+  // Uses Touch Events (touchstart/touchmove/touchend) with passive:false so that
+  // e.preventDefault() actually suppresses scroll — the same pattern job blocks
+  // use and the one that works reliably on iOS Safari.
 
-  const equipPointerRef = useRef<number | null>(null); // equipment id being dragged
-  const [equipPointerGhost, setEquipPointerGhost] = useState<{ x: number; y: number } | null>(null);
-  const [equipPointerActiveId, setEquipPointerActiveId] = useState<number | null>(null);
-  const [equipPointerOverBlockId, setEquipPointerOverBlockId] = useState<string | null>(null);
+  const equipTouchRef = useRef<number | null>(null); // equipment id being touch-dragged
+  const [equipTouchGhostPos, setEquipTouchGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const [equipTouchActiveId, setEquipTouchActiveId] = useState<number | null>(null);
 
-  const handleEquipPointerDown = useCallback((e: React.PointerEvent, equipmentId: number) => {
-    // Only activate on touch; mouse users keep the existing HTML5 drag
-    if (e.pointerType === 'mouse') return;
+  const handleEquipTouchStart = useCallback((e: React.TouchEvent, equipmentId: number) => {
+    if (!editMode) return;
     e.preventDefault();
-    equipPointerRef.current = equipmentId;
-    setEquipPointerActiveId(equipmentId);
-    setEquipPointerGhost({ x: e.clientX, y: e.clientY });
-  }, []);
+    const touch = e.touches[0];
+    equipTouchRef.current = equipmentId;
+    setEquipTouchActiveId(equipmentId);
+    setEquipTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+  }, [editMode]);
 
   useEffect(() => {
-    if (!equipPointerGhost) return;
+    if (!equipTouchGhostPos) return;
 
-    const onMove = (e: PointerEvent) => {
-      setEquipPointerGhost({ x: e.clientX, y: e.clientY });
-      const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      setEquipTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+      const els = document.elementsFromPoint(touch.clientX, touch.clientY);
       const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
-      const blockId = blockEl?.dataset.blockId ?? null;
-      setEquipPointerOverBlockId(blockId);
-      setEquipDragOverBlockId(blockId);
+      setEquipDragOverBlockId(blockEl?.dataset.blockId ?? null);
     };
 
-    const onUp = (e: PointerEvent) => {
-      const els = document.elementsFromPoint(e.clientX, e.clientY);
+    const onEnd = (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      const els = document.elementsFromPoint(touch.clientX, touch.clientY);
       const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
       const targetBlockId = blockEl?.dataset.blockId;
-      if (targetBlockId && equipPointerRef.current !== null) {
-        dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipPointerRef.current });
+      if (targetBlockId && equipTouchRef.current !== null) {
+        dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipTouchRef.current });
       }
-      equipPointerRef.current = null;
-      setEquipPointerActiveId(null);
-      setEquipPointerGhost(null);
-      setEquipPointerOverBlockId(null);
+      equipTouchRef.current = null;
+      setEquipTouchActiveId(null);
+      setEquipTouchGhostPos(null);
       setEquipDragOverBlockId(null);
     };
 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
     return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('touchmove', onMove, { passive: false } as EventListenerOptions);
+      window.removeEventListener('touchend', onEnd);
     };
-  }, [equipPointerGhost, dispatch]);
+  }, [equipTouchGhostPos, dispatch]);
 
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
@@ -1920,8 +1926,9 @@ export default function Scheduler({
         <EquipmentTray
           equipment={equipmentList}
           onDragStart={handleEquipDragStart}
-          onPointerDown={handleEquipPointerDown}
-          activeId={equipPointerActiveId}
+          onTouchStart={handleEquipTouchStart}
+          activeTouchId={equipTouchActiveId}
+          editMode={editMode}
         />
       )}
       <div ref={scrollRef} className="flex-1 overflow-auto" style={{ minHeight: 0 }}>
@@ -2224,17 +2231,17 @@ export default function Scheduler({
         </div>
       )}
 
-      {/* Equipment pointer-drag ghost (mobile touch) */}
-      {equipPointerGhost && equipPointerActiveId !== null && (() => {
-        const eq = equipmentList.find(e => e.id === equipPointerActiveId);
-        const onBlock = equipPointerOverBlockId !== null;
+      {/* Equipment touch-drag ghost (mobile) */}
+      {equipTouchGhostPos && equipTouchActiveId !== null && (() => {
+        const eq = equipmentList.find(e => e.id === equipTouchActiveId);
+        const onBlock = equipDragOverBlockId !== null;
         return (
           <div
             aria-hidden="true"
             style={{
               position: 'fixed',
-              left: equipPointerGhost.x + 14,
-              top:  equipPointerGhost.y + 14,
+              left: equipTouchGhostPos.x + 14,
+              top:  equipTouchGhostPos.y + 14,
               display: 'flex',
               alignItems: 'center',
               gap: 6,
