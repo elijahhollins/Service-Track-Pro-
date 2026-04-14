@@ -147,7 +147,8 @@ type Action =
   | { type: 'REPLACE_ALL';        blocks: ScheduleBlock[] }
   | { type: 'ASSIGN_EQUIPMENT';   blockId: string; equipmentId: number }
   | { type: 'UNASSIGN_EQUIPMENT'; blockId: string; equipmentId: number }
-  | { type: 'SHIFT_CREW';         crewId: string; fromDate: string; days: number };
+  | { type: 'SHIFT_CREW';         crewId: string; fromDate: string; days: number }
+  | { type: 'RESIZE_BLOCK';       id: string; durationDays: number };
 
 /** Push all blocks for a crew that start on or after `fromDate` forward by `shiftDays`. */
 function shiftAfter(
@@ -231,6 +232,13 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
       return state.map(b =>
         b.crewId === action.crewId && b.startDate >= action.fromDate
           ? { ...b, startDate: addDays(b.startDate, action.days) }
+          : b,
+      );
+
+    case 'RESIZE_BLOCK':
+      return state.map(b =>
+        b.id === action.id
+          ? { ...b, durationDays: Math.max(1, action.durationDays) }
           : b,
       );
 
@@ -1119,6 +1127,13 @@ const AddBlockModal = ({
 // JOB BLOCK  (draggable, right-click, tooltip)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const RESIZE_HANDLE_BG_IDLE   = 'rgba(255,255,255,0.12)';
+const RESIZE_HANDLE_BG_ACTIVE = 'rgba(255,255,255,0.30)';
+const RESIZE_BAR_STYLE: React.CSSProperties = {
+  width: 1.5, height: 10, borderRadius: 1,
+  background: 'rgba(255,255,255,0.65)', flexShrink: 0,
+};
+
 interface JobBlockProps {
   key?: React.Key;
   block: ScheduleBlock;
@@ -1144,6 +1159,8 @@ interface JobBlockProps {
   onMouseMove: (e: React.MouseEvent) => void;
   onMouseLeave: () => void;
   onTouchStart?: (e: React.TouchEvent) => void;
+  onResizeStart?: (e: React.PointerEvent) => void;
+  isResizing?: boolean;
 }
 
 const JobBlock = ({
@@ -1152,6 +1169,7 @@ const JobBlock = ({
   equipmentCount, isEquipDragOver, onEquipmentDrop, onEquipmentDragOver, onEquipmentDragLeave, onEquipmentClick,
   onDragStart, onDragEnd, onContextMenu,
   onMouseEnter, onMouseMove, onMouseLeave, onTouchStart,
+  onResizeStart, isResizing,
 }: JobBlockProps) => {
   const isDelay   = block.type === 'delay';
   const bgColor   = isDelay ? '#6b7280' : color;
@@ -1254,6 +1272,38 @@ const JobBlock = ({
           }}
         >
           <GripHorizontal style={{ width: 10, height: 10 }} />
+        </div>
+      )}
+
+      {/* Edit mode resize handle — right edge, drag to change duration */}
+      {editMode && (
+        <div
+          onPointerDown={e => {
+            e.stopPropagation();
+            e.preventDefault();
+            onResizeStart?.(e);
+          }}
+          onMouseDown={e => e.stopPropagation()}
+          title="Drag to resize duration"
+          style={{
+            position: 'absolute',
+            top: 0,
+            right: 0,
+            width: 10,
+            height: '100%',
+            cursor: 'ew-resize',
+            borderRadius: '0 8px 8px 0',
+            background: isResizing ? RESIZE_HANDLE_BG_ACTIVE : RESIZE_HANDLE_BG_IDLE,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+            zIndex: 20,
+            transition: 'background 0.1s',
+          }}
+        >
+          <div style={RESIZE_BAR_STYLE} />
+          <div style={RESIZE_BAR_STYLE} />
         </div>
       )}
 
@@ -1414,6 +1464,11 @@ export default function Scheduler({
         }));
         dispatch({ type: 'REPLACE_ALL', blocks: loaded });
         dbBlockIdsRef.current = new Set(loaded.map(b => b.id));
+      } else if (!blocksRes.error) {
+        // DB returned zero rows (fresh company) — clear mock blocks so they
+        // don't cause FK violations on the next real block upsert.
+        dispatch({ type: 'REPLACE_ALL', blocks: [] });
+        dbBlockIdsRef.current = new Set();
       }
 
       dbLoadedRef.current = true;
@@ -1565,6 +1620,17 @@ export default function Scheduler({
   } | null>(null);
   const [touchGhostPos, setTouchGhostPos] = useState<{ x: number; y: number } | null>(null);
 
+  // Resize state (drag right edge of a block to change durationDays)
+  const resizeRef = useRef<{
+    blockId: string;
+    startX: number;
+    startDuration: number;
+    liveDuration: number;
+  } | null>(null);
+  const resizeRafRef = useRef<number | null>(null);
+  const [resizingId,          setResizingId]          = useState<string | null>(null);
+  const [liveResizeDuration,  setLiveResizeDuration]  = useState<number>(1);
+
   // Overlay state
   const [ctxMenu,           setCtxMenu]           = useState<CtxMenuState | null>(null);
   const [dayPrompt,         setDayPrompt]         = useState<DayPromptState | null>(null);
@@ -1639,6 +1705,59 @@ export default function Scheduler({
     dispatch({ type: 'ASSIGN_EQUIPMENT', blockId, equipmentId });
     setEquipDragOverBlockId(null);
   }, []);
+
+  // ── Resize handlers (drag right edge to change durationDays) ────────────────
+
+  const handleResizeStart = useCallback((e: React.PointerEvent, block: ScheduleBlock) => {
+    if (!editMode) return;
+    resizeRef.current = {
+      blockId:       block.id,
+      startX:        e.clientX,
+      startDuration: block.durationDays,
+      liveDuration:  block.durationDays,
+    };
+    setResizingId(block.id);
+    setLiveResizeDuration(block.durationDays);
+  }, [editMode]);
+
+  // Global pointer-move / pointer-up listeners while a resize is in progress
+  useEffect(() => {
+    if (!resizingId) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!resizeRef.current) return;
+      const dx        = e.clientX - resizeRef.current.startX;
+      const deltaDays = Math.round(dx / dayWidthRef.current);
+      const newDur    = Math.max(1, resizeRef.current.startDuration + deltaDays);
+      resizeRef.current.liveDuration = newDur;
+      // Throttle re-renders with requestAnimationFrame
+      if (resizeRafRef.current !== null) return;
+      resizeRafRef.current = requestAnimationFrame(() => {
+        resizeRafRef.current = null;
+        if (resizeRef.current) setLiveResizeDuration(resizeRef.current.liveDuration);
+      });
+    };
+
+    const handlePointerUp = () => {
+      const ref = resizeRef.current;
+      if (ref) {
+        dispatch({ type: 'RESIZE_BLOCK', id: ref.blockId, durationDays: ref.liveDuration });
+      }
+      if (resizeRafRef.current !== null) {
+        cancelAnimationFrame(resizeRafRef.current);
+        resizeRafRef.current = null;
+      }
+      resizeRef.current = null;
+      setResizingId(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup',   handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup',   handlePointerUp);
+    };
+  }, [resizingId]);
 
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
@@ -2078,8 +2197,10 @@ export default function Scheduler({
 
                   {/* Job/Delay blocks */}
                   {crewBlocks.map(block => {
+                    const isResizingThisBlock = resizingId === block.id;
+                    const effectiveDuration   = isResizingThisBlock ? liveResizeDuration : block.durationDays;
                     const left  = diffDays(block.startDate, viewStart) * dayWidth;
-                    const width = block.durationDays * dayWidth;
+                    const width = effectiveDuration * dayWidth;
                     if (left + width < 0 || left > totalGridWidth) return null;
                     const job = jobsState.find(j => j.jobNumber === block.jobNumber);
                     const eqCount = (block.equipmentIds ?? []).length;
@@ -2105,6 +2226,8 @@ export default function Scheduler({
                         onDragStart={e => handleDragStart(e, block)}
                         onDragEnd={handleDragEnd}
                         onTouchStart={e => handleBlockTouchStart(e, block, color)}
+                        onResizeStart={e => handleResizeStart(e, block)}
+                        isResizing={isResizingThisBlock}
                         onContextMenu={e => {
                           e.preventDefault();
                           setCtxMenu({ blockId: block.id, blockType: block.type, x: e.clientX, y: e.clientY });
