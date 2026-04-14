@@ -260,7 +260,7 @@ const EquipmentTray = ({
     role="toolbar"
     aria-label="Equipment palette — drag items onto job blocks"
     className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 overflow-x-auto"
-    style={{ minHeight: 48, touchAction: editMode ? 'none' : 'auto' }}
+    style={{ minHeight: 48, touchAction: 'pan-x' }}
   >
     <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Equipment:</span>
     {equipment.length === 0 && (
@@ -278,7 +278,7 @@ const EquipmentTray = ({
             ? 'border-blue-400 bg-blue-50 text-blue-700 opacity-60'
             : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70'
         } ${editMode ? 'cursor-grab' : 'cursor-default'}`}
-        style={{ userSelect: 'none', touchAction: editMode ? 'none' : 'auto' }}
+        style={{ userSelect: 'none', touchAction: editMode ? 'none' : 'pan-x' }}
       >
         <Wrench className="w-3 h-3 shrink-0" />
         {eq.name}
@@ -287,8 +287,8 @@ const EquipmentTray = ({
         )}
       </div>
     ))}
-    {editMode === false && (
-      <span className="text-xs text-slate-400 italic ml-1 shrink-0">Enter Edit mode to drag on mobile</span>
+    {!editMode && (
+      <span className="text-xs text-slate-400 italic ml-1 shrink-0">Edit mode to drag</span>
     )}
   </div>
 );
