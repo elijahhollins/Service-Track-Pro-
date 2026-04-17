@@ -246,15 +246,21 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
 const EquipmentTray = ({
   equipment,
   onDragStart,
+  onTouchStart,
+  activeTouchId,
+  editMode,
 }: {
   equipment: SchedulerEquipment[];
   onDragStart: (e: React.DragEvent, id: number) => void;
+  onTouchStart?: (e: React.TouchEvent, id: number) => void;
+  activeTouchId?: number | null;
+  editMode?: boolean;
 }) => (
   <div
     role="toolbar"
     aria-label="Equipment palette — drag items onto job blocks"
     className="flex items-center gap-2 px-4 py-2 border-b border-slate-200 bg-slate-50 shrink-0 overflow-x-auto"
-    style={{ minHeight: 48 }}
+    style={{ minHeight: 48, touchAction: 'pan-x' }}
   >
     <span className="text-xs font-semibold text-slate-500 shrink-0 mr-1">Equipment:</span>
     {equipment.length === 0 && (
@@ -265,9 +271,14 @@ const EquipmentTray = ({
         key={eq.id}
         draggable
         onDragStart={e => onDragStart(e, eq.id)}
+        onTouchStart={onTouchStart ? e => onTouchStart(e, eq.id) : undefined}
         title={eq.hourly_rate ? `$${eq.hourly_rate}/hr — drag to assign` : 'Drag to assign'}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-300 bg-white text-slate-700 text-xs font-medium cursor-grab select-none shrink-0 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70 transition-colors"
-        style={{ userSelect: 'none' }}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs font-medium select-none shrink-0 transition-colors ${
+          activeTouchId === eq.id
+            ? 'border-blue-400 bg-blue-50 text-blue-700 opacity-60'
+            : 'border-slate-300 bg-white text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50 active:opacity-70'
+        } ${editMode ? 'cursor-grab' : 'cursor-default'}`}
+        style={{ userSelect: 'none', touchAction: editMode ? 'none' : 'pan-x' }}
       >
         <Wrench className="w-3 h-3 shrink-0" />
         {eq.name}
@@ -276,6 +287,9 @@ const EquipmentTray = ({
         )}
       </div>
     ))}
+    {!editMode && (
+      <span className="text-xs text-slate-400 italic ml-1 shrink-0">Edit mode to drag</span>
+    )}
   </div>
 );
 
@@ -1160,6 +1174,7 @@ const JobBlock = ({
 
   return (
     <div
+      data-block-id={block.id}
       draggable={editMode}
       onDragStart={editMode ? onDragStart : undefined}
       onDragEnd={editMode ? onDragEnd : undefined}
@@ -1640,6 +1655,58 @@ export default function Scheduler({
     setEquipDragOverBlockId(null);
   }, []);
 
+  // ── Equipment touch-drag (mobile — mirrors job-block touch-drag) ────────────
+  // Uses Touch Events (touchstart/touchmove/touchend) with passive:false so that
+  // e.preventDefault() actually suppresses scroll — the same pattern job blocks
+  // use and the one that works reliably on iOS Safari.
+
+  const equipTouchRef = useRef<number | null>(null); // equipment id being touch-dragged
+  const [equipTouchGhostPos, setEquipTouchGhostPos] = useState<{ x: number; y: number } | null>(null);
+  const [equipTouchActiveId, setEquipTouchActiveId] = useState<number | null>(null);
+
+  const handleEquipTouchStart = useCallback((e: React.TouchEvent, equipmentId: number) => {
+    if (!editMode) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    equipTouchRef.current = equipmentId;
+    setEquipTouchActiveId(equipmentId);
+    setEquipTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+  }, [editMode]);
+
+  useEffect(() => {
+    if (!equipTouchGhostPos) return;
+
+    const onMove = (e: TouchEvent) => {
+      e.preventDefault();
+      const touch = e.touches[0];
+      setEquipTouchGhostPos({ x: touch.clientX, y: touch.clientY });
+      const els = document.elementsFromPoint(touch.clientX, touch.clientY);
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
+      setEquipDragOverBlockId(blockEl?.dataset.blockId ?? null);
+    };
+
+    const onEnd = (e: TouchEvent) => {
+      const touch = e.changedTouches[0];
+      const els = document.elementsFromPoint(touch.clientX, touch.clientY);
+      const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
+      const targetBlockId = blockEl?.dataset.blockId;
+      if (targetBlockId && equipTouchRef.current !== null) {
+        dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipTouchRef.current });
+      }
+      equipTouchRef.current = null;
+      setEquipTouchActiveId(null);
+      setEquipTouchGhostPos(null);
+      setEquipDragOverBlockId(null);
+    };
+
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+    return () => {
+      window.removeEventListener('touchmove', onMove, { passive: false } as EventListenerOptions);
+      window.removeEventListener('touchend', onEnd);
+    };
+  }, [equipTouchGhostPos, dispatch]);
+
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
   const handleBlockTouchStart = useCallback((
@@ -1859,6 +1926,9 @@ export default function Scheduler({
         <EquipmentTray
           equipment={equipmentList}
           onDragStart={handleEquipDragStart}
+          onTouchStart={handleEquipTouchStart}
+          activeTouchId={equipTouchActiveId}
+          editMode={editMode}
         />
       )}
       <div ref={scrollRef} className="flex-1 overflow-auto" style={{ minHeight: 0 }}>
@@ -2160,6 +2230,40 @@ export default function Scheduler({
           {touchDragRef.current.label}
         </div>
       )}
+
+      {/* Equipment touch-drag ghost (mobile) */}
+      {equipTouchGhostPos && equipTouchActiveId !== null && (() => {
+        const eq = equipmentList.find(e => e.id === equipTouchActiveId);
+        const onBlock = equipDragOverBlockId !== null;
+        return (
+          <div
+            aria-hidden="true"
+            style={{
+              position: 'fixed',
+              left: equipTouchGhostPos.x + 14,
+              top:  equipTouchGhostPos.y + 14,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: onBlock ? '#2563eb' : '#1e293b',
+              color: '#fff',
+              borderRadius: 999,
+              padding: '6px 12px',
+              fontSize: 12,
+              fontWeight: 700,
+              pointerEvents: 'none',
+              zIndex: 9999,
+              boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+              whiteSpace: 'nowrap',
+              transform: 'rotate(3deg)',
+              transition: 'background 0.1s',
+            }}
+          >
+            <Wrench style={{ width: 12, height: 12, flexShrink: 0 }} />
+            {eq?.name ?? 'Equipment'}
+          </div>
+        );
+      })()}
 
       {ctxMenu && (
         <CtxMenu
