@@ -134,6 +134,11 @@ const INITIAL_BLOCKS: ScheduleBlock[] = [
   { id: 'b5', crewId: 'c3', jobNumber: 'J-1005', startDate: addDays(todayISO,  1), durationDays: 6, type: 'job', extended: false },
 ];
 
+// IDs of the demo blocks above. These blocks reference mock crew IDs ('c1'–'c3')
+// that are not in the database, so they must never be included in DB upserts or
+// the foreign-key constraint on schedule_blocks.crew_id will reject the entire batch.
+const MOCK_BLOCK_IDS = new Set(INITIAL_BLOCKS.map(b => b.id));
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // REDUCER
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1440,6 +1445,11 @@ export default function Scheduler({
   // round-trip SELECT on every state change.
   const dbBlockIdsRef = useRef<Set<string>>(new Set());
 
+  // Ref that always holds the latest crewsState — used inside async callbacks
+  // (block save effect) without adding crewsState to that effect's deps array.
+  const crewsStateRef = useRef(crewsState);
+  crewsStateRef.current = crewsState;
+
   // ── Persist crews to Supabase whenever they change (debounced 600 ms) ──────
   useEffect(() => {
     if (!companyId || !dbLoadedRef.current) return;
@@ -1477,7 +1487,11 @@ export default function Scheduler({
   // ── Persist blocks to Supabase whenever they change (debounced 600 ms) ─────
   useEffect(() => {
     if (!companyId || !dbLoadedRef.current) return;
-    const rows = blocks.map(b => ({
+
+    // Exclude demo blocks: they reference mock crew IDs ('c1'–'c3') that are
+    // never in the DB, causing FK violations that silently fail the entire batch.
+    const blocksToSave = blocks.filter(b => !MOCK_BLOCK_IDS.has(b.id));
+    const rows = blocksToSave.map(b => ({
       id:            b.id,
       company_id:    companyId,
       crew_id:       b.crewId,
@@ -1489,21 +1503,43 @@ export default function Scheduler({
       equipment_ids: b.equipmentIds ?? [],
     }));
 
-    const currentIds = new Set(blocks.map(b => b.id));
+    const currentIds = new Set(blocksToSave.map(b => b.id));
     // Ids that were in the DB but are no longer in state → need deleting
     const toDelete = [...dbBlockIdsRef.current].filter(id => !currentIds.has(id));
 
     const t = setTimeout(() => {
       if (rows.length > 0) {
-        supabase.from('schedule_blocks').upsert(rows, { onConflict: 'id' })
-          .then(({ error }) => {
-            if (error) {
-              console.error('[Scheduler] Failed to save blocks:', error.message);
-            } else {
-              // Update our local DB-id mirror
-              dbBlockIdsRef.current = currentIds;
-            }
-          });
+        // Upsert any crews referenced by these blocks before saving the blocks.
+        // This ensures the FK constraint (schedule_blocks.crew_id → schedule_crews.id)
+        // is satisfied even when blocks use crews that haven't been persisted yet
+        // (e.g. mock crews 'c1'–'c3' or freshly-created crews).
+        const referencedCrewIds = new Set(rows.map(r => r.crew_id));
+        const crewRows = crewsStateRef.current
+          .filter(c => referencedCrewIds.has(c.id))
+          .map(c => ({
+            id:         c.id,
+            company_id: companyId,
+            name:       c.name,
+            member_ids: c.memberIds,
+          }));
+        const crewSave = crewRows.length > 0
+          ? supabase.from('schedule_crews').upsert(crewRows, { onConflict: 'id' })
+          : Promise.resolve({ error: null });
+        crewSave.then(({ error: crewErr }) => {
+          if (crewErr) {
+            console.error('[Scheduler] Failed to save crews before blocks:', crewErr.message);
+            return;
+          }
+          supabase.from('schedule_blocks').upsert(rows, { onConflict: 'id' })
+            .then(({ error }) => {
+              if (error) {
+                console.error('[Scheduler] Failed to save blocks:', error.message);
+              } else {
+                // Update our local DB-id mirror
+                dbBlockIdsRef.current = currentIds;
+              }
+            });
+        });
       }
       if (toDelete.length > 0) {
         supabase.from('schedule_blocks').delete().in('id', toDelete)
@@ -1725,10 +1761,8 @@ export default function Scheduler({
   }, [editMode, dayWidth]);
 
   // Global touch-move / touch-end listeners while a touch drag is in progress
-  const crewsStateRef  = useRef(crewsState);
   const dayWidthRef    = useRef(dayWidth);
   const viewStartRef   = useRef(viewStart);
-  crewsStateRef.current  = crewsState;
   dayWidthRef.current    = dayWidth;
   viewStartRef.current   = viewStart;
 
