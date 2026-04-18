@@ -122,6 +122,31 @@ const fmtLong = (iso: string): string =>
 
 const todayISO = toISO(new Date());
 
+/** Returns true when two schedule intervals [aStart, aStart+aDays) and [bStart, bStart+bDays) overlap. */
+const blocksOverlap = (
+  aStart: string, aDays: number,
+  bStart: string, bDays: number,
+): boolean => {
+  const aEnd = addDays(aStart, aDays);
+  const bEnd = addDays(bStart, bDays);
+  return aStart < bEnd && bStart < aEnd;
+};
+
+/** Returns blocks of the same crew that overlap with [startDate, startDate+durationDays), excluding excludeId. */
+const findOverlapConflicts = (
+  blocks: ScheduleBlock[],
+  crewId: string,
+  startDate: string,
+  durationDays: number,
+  excludeId?: string,
+): ScheduleBlock[] =>
+  blocks.filter(
+    b =>
+      b.crewId === crewId &&
+      b.id !== excludeId &&
+      blocksOverlap(startDate, durationDays, b.startDate, b.durationDays),
+  );
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // INITIAL STATE  (mock blocks relative to today)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -145,9 +170,11 @@ const MOCK_BLOCK_IDS = new Set(INITIAL_BLOCKS.map(b => b.id));
 
 type Action =
   | { type: 'MOVE_BLOCK';         id: string; crewId: string; startDate: string }
+  | { type: 'MOVE_BLOCK_PUSH';    id: string; crewId: string; startDate: string; shiftDays: number }
   | { type: 'INSERT_DELAY';       blockId: string; days: number }
   | { type: 'EXTEND_JOB';         blockId: string; days: number }
   | { type: 'ADD_BLOCK';          block: ScheduleBlock }
+  | { type: 'ADD_BLOCK_PUSH';     block: ScheduleBlock; shiftDays: number }
   | { type: 'DELETE_BLOCK';       id: string }
   | { type: 'REPLACE_ALL';        blocks: ScheduleBlock[] }
   | { type: 'ASSIGN_EQUIPMENT';   blockId: string; equipmentId: number }
@@ -178,6 +205,17 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
           ? { ...b, crewId: action.crewId, startDate: action.startDate }
           : b,
       );
+
+    case 'MOVE_BLOCK_PUSH': {
+      // Move the block to its new position, then push all subsequent crew blocks
+      // (starting on or after the new start date) forward to make room.
+      const moved = state.map(b =>
+        b.id === action.id
+          ? { ...b, crewId: action.crewId, startDate: action.startDate }
+          : b,
+      );
+      return shiftAfter(moved, action.crewId, action.startDate, action.shiftDays, action.id);
+    }
 
     case 'INSERT_DELAY': {
       const job = state.find(b => b.id === action.blockId);
@@ -211,6 +249,13 @@ function reducer(state: ScheduleBlock[], action: Action): ScheduleBlock[] {
 
     case 'ADD_BLOCK':
       return [...state, action.block];
+
+    case 'ADD_BLOCK_PUSH': {
+      // Push all existing blocks of the crew that start on or after the new
+      // block's start date forward to make room, then insert the new block.
+      const shifted = shiftAfter(state, action.block.crewId, action.block.startDate, action.shiftDays);
+      return [...shifted, action.block];
+    }
 
     case 'DELETE_BLOCK':
       return state.filter(b => b.id !== action.id);
@@ -609,6 +654,59 @@ const DayPromptModal = ({
     </div>
   );
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// OVERLAP CONFIRM MODAL  (shown when a drag-drop or block-add causes a conflict)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OverlapConfirmModal = ({
+  jobLabel,
+  newDate,
+  crewName,
+  conflictCount,
+  onConfirm,
+  onCancel,
+}: {
+  jobLabel: string;
+  newDate: string;
+  crewName: string;
+  conflictCount: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) => (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <h3 className="text-base font-bold text-slate-900 mb-2">Scheduling Conflict</h3>
+      <p className="text-sm text-slate-600 mb-5">
+        <span className="font-semibold text-slate-800">{jobLabel}</span> starting on{' '}
+        <span className="font-semibold text-slate-800">{fmtShort(newDate)}</span> overlaps
+        with{' '}
+        {conflictCount === 1
+          ? '1 existing block'
+          : `${conflictCount} existing blocks`}{' '}
+        for <span className="font-semibold text-slate-800">{crewName}</span>.
+        <br />
+        <br />
+        Push the conflicting block{conflictCount !== 1 ? 's' : ''} and everything after
+        them into the future?
+      </p>
+      <div className="flex gap-3">
+        <button
+          onClick={onCancel}
+          className="flex-1 py-2 border border-slate-200 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-sm font-semibold transition-colors"
+        >
+          Push &amp; Reschedule
+        </button>
+      </div>
+    </div>
+  </div>
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CREW MEMBER PICKER  (checkbox list used inside ManageCrewsModal)
@@ -1629,10 +1727,34 @@ export default function Scheduler({
   const [equipModalBlockId, setEquipModalBlockId] = useState<string | null>(null);
   const [equipDragOverBlockId, setEquipDragOverBlockId] = useState<string | null>(null);
 
+  // Pending overlap-conflict confirmation (drag-move)
+  const [pendingMove, setPendingMove] = useState<{
+    blockId: string;
+    crewId: string;
+    startDate: string;
+    jobLabel: string;
+    crewName: string;
+    conflictCount: number;
+    shiftDays: number;
+  } | null>(null);
+
+  // Pending overlap-conflict confirmation (add-block)
+  const [pendingAdd, setPendingAdd] = useState<{
+    block: ScheduleBlock;
+    crewName: string;
+    conflictCount: number;
+    shiftDays: number;
+  } | null>(null);
+
   // Ref to the outer scroll container (needed for drop position calc)
   const scrollRef = useRef<HTMLDivElement>(null);
   // requestAnimationFrame ID for throttling tooltip mouse-move updates
   const tooltipRafRef = useRef<number | null>(null);
+
+  // Ref that always holds the latest blocks state — used inside callbacks/effects
+  // that can't take blocks as a dependency without causing excessive re-renders.
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
 
   // Notify parent when blocks change
   const prevRef = useRef(blocks);
@@ -1675,8 +1797,27 @@ export default function Scheduler({
     const dayIndex   = Math.floor(xInGrid / dayWidth);
     const newStart   = addDays(viewStart, dayIndex - dragOffsetDays);
 
-    dispatch({ type: 'MOVE_BLOCK', id: blockId, crewId, startDate: newStart });
     setDraggingId(null);
+
+    const allBlocks   = blocksRef.current;
+    const movingBlock = allBlocks.find(b => b.id === blockId);
+    if (!movingBlock) return;
+
+    const conflicts = findOverlapConflicts(allBlocks, crewId, newStart, movingBlock.durationDays, blockId);
+    if (conflicts.length > 0) {
+      const crew = crewsStateRef.current.find(c => c.id === crewId);
+      setPendingMove({
+        blockId,
+        crewId,
+        startDate: newStart,
+        jobLabel:  movingBlock.jobNumber,
+        crewName:  crew?.name ?? crewId,
+        conflictCount: conflicts.length,
+        shiftDays: movingBlock.durationDays,
+      });
+    } else {
+      dispatch({ type: 'MOVE_BLOCK', id: blockId, crewId, startDate: newStart });
+    }
   }, [dayWidth, viewStart, dragOffsetDays]);
 
   // ── Equipment drag handlers ──────────────────────────────────────────────────
@@ -1805,7 +1946,26 @@ export default function Scheduler({
       const newStart   = addDays(viewStartRef.current, dayIndex - drag.offsetDays);
 
       if (targetCrew) {
-        dispatch({ type: 'MOVE_BLOCK', id: drag.blockId, crewId: targetCrew.id, startDate: newStart });
+        const allBlocks   = blocksRef.current;
+        const movingBlock = allBlocks.find(b => b.id === drag.blockId);
+        if (movingBlock) {
+          const conflicts = findOverlapConflicts(
+            allBlocks, targetCrew.id, newStart, movingBlock.durationDays, drag.blockId,
+          );
+          if (conflicts.length > 0) {
+            setPendingMove({
+              blockId:       drag.blockId,
+              crewId:        targetCrew.id,
+              startDate:     newStart,
+              jobLabel:      movingBlock.jobNumber,
+              crewName:      targetCrew.name,
+              conflictCount: conflicts.length,
+              shiftDays:     movingBlock.durationDays,
+            });
+          } else {
+            dispatch({ type: 'MOVE_BLOCK', id: drag.blockId, crewId: targetCrew.id, startDate: newStart });
+          }
+        }
       }
       touchDragRef.current = null;
       setDraggingId(null);
@@ -2321,11 +2481,67 @@ export default function Scheduler({
         />
       )}
 
+      {/* Overlap conflict confirmation — triggered by drag-drop */}
+      {pendingMove && (
+        <OverlapConfirmModal
+          jobLabel={pendingMove.jobLabel}
+          newDate={pendingMove.startDate}
+          crewName={pendingMove.crewName}
+          conflictCount={pendingMove.conflictCount}
+          onConfirm={() => {
+            dispatch({
+              type: 'MOVE_BLOCK_PUSH',
+              id:        pendingMove.blockId,
+              crewId:    pendingMove.crewId,
+              startDate: pendingMove.startDate,
+              shiftDays: pendingMove.shiftDays,
+            });
+            setPendingMove(null);
+          }}
+          onCancel={() => setPendingMove(null)}
+        />
+      )}
+
+      {/* Overlap conflict confirmation — triggered by add-block */}
+      {pendingAdd && (
+        <OverlapConfirmModal
+          jobLabel={pendingAdd.block.jobNumber}
+          newDate={pendingAdd.block.startDate}
+          crewName={pendingAdd.crewName}
+          conflictCount={pendingAdd.conflictCount}
+          onConfirm={() => {
+            dispatch({
+              type:      'ADD_BLOCK_PUSH',
+              block:     pendingAdd.block,
+              shiftDays: pendingAdd.shiftDays,
+            });
+            setPendingAdd(null);
+          }}
+          onCancel={() => setPendingAdd(null)}
+        />
+      )}
+
       {showAddModal && (
         <AddBlockModal
           crews={crewsState}
           jobs={jobsState}
-          onAdd={block => dispatch({ type: 'ADD_BLOCK', block })}
+          onAdd={block => {
+            const conflicts = findOverlapConflicts(
+              blocks, block.crewId, block.startDate, block.durationDays,
+            );
+            if (conflicts.length > 0) {
+              const crew = crewsState.find(c => c.id === block.crewId);
+              setShowAddModal(false);
+              setPendingAdd({
+                block,
+                crewName:      crew?.name ?? block.crewId,
+                conflictCount: conflicts.length,
+                shiftDays:     block.durationDays,
+              });
+            } else {
+              dispatch({ type: 'ADD_BLOCK', block });
+            }
+          }}
           onClose={() => setShowAddModal(false)}
         />
       )}
