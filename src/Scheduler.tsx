@@ -627,15 +627,16 @@ const DayPromptModal = ({
         <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
           Number of Days
         </label>
-        <input
-          type="number"
-          min={1}
-          max={365}
+        <select
           value={days}
           autoFocus
-          onChange={e => setDays(Math.max(1, parseInt(e.target.value) || 1))}
-          className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
-        />
+          onChange={e => setDays(parseInt(e.target.value))}
+          className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4 bg-white"
+        >
+          {Array.from({ length: 30 }, (_, i) => i + 1).map(d => (
+            <option key={d} value={d}>{d} day{d !== 1 ? 's' : ''}</option>
+          ))}
+        </select>
         <div className="flex gap-3">
           <button
             onClick={onClose}
@@ -1189,19 +1190,20 @@ const AddBlockModal = ({
               />
             </div>
 
-            <div style={{ width: 90 }}>
+            <div style={{ width: 110 }}>
               <label className="block text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1.5">
                 Duration (days)
               </label>
-              <input
-                type="number"
-                min={1}
-                max={365}
+              <select
                 value={durationDays}
-                onChange={e => setDuration(Math.max(1, parseInt(e.target.value) || 1))}
-                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onChange={e => setDuration(parseInt(e.target.value))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                 required
-              />
+              >
+                {Array.from({ length: 60 }, (_, i) => i + 1).map(d => (
+                  <option key={d} value={d}>{d}d</option>
+                ))}
+              </select>
             </div>
           </div>
 
