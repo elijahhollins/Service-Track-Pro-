@@ -1262,6 +1262,7 @@ interface JobBlockProps {
   onMouseMove: (e: React.MouseEvent) => void;
   onMouseLeave: () => void;
   onTouchStart?: (e: React.TouchEvent) => void;
+  onResizeStart?: (e: React.MouseEvent) => void;
 }
 
 const JobBlock = ({
@@ -1270,6 +1271,7 @@ const JobBlock = ({
   equipmentCount, isEquipDragOver, onEquipmentDrop, onEquipmentDragOver, onEquipmentDragLeave, onEquipmentClick,
   onDragStart, onDragEnd, onContextMenu,
   onMouseEnter, onMouseMove, onMouseLeave, onTouchStart,
+  onResizeStart,
 }: JobBlockProps) => {
   const isDelay   = block.type === 'delay';
   const bgColor   = isDelay ? '#6b7280' : color;
@@ -1373,6 +1375,30 @@ const JobBlock = ({
           }}
         >
           <GripHorizontal style={{ width: 10, height: 10 }} />
+        </div>
+      )}
+
+      {/* Resize handle — visible on right edge in edit mode for job blocks */}
+      {editMode && !isDelay && (
+        <div
+          onMouseDown={e => { e.stopPropagation(); e.preventDefault(); onResizeStart?.(e); }}
+          title="Drag to extend job duration"
+          style={{
+            position: 'absolute',
+            right: 0, top: 0,
+            width: 10, height: '100%',
+            cursor: 'col-resize',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 3,
+            zIndex: 15,
+          }}
+        >
+          <div style={{ width: 2, height: 6, background: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
+          <div style={{ width: 2, height: 6, background: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
+          <div style={{ width: 2, height: 6, background: 'rgba(255,255,255,0.55)', borderRadius: 1 }} />
         </div>
       )}
 
@@ -1700,6 +1726,16 @@ export default function Scheduler({
   const [draggingId,    setDraggingId]    = useState<string | null>(null);
   const [dragOffsetDays, setDragOffsetDays] = useState(0);
 
+  // Resize-drag state (dragging the right edge of a job block to extend it)
+  const [resizingId,      setResizingId]      = useState<string | null>(null);
+  const [resizeDeltaDays, setResizeDeltaDays] = useState(0);
+  const resizeRef = useRef<{
+    blockId:      string;
+    startX:       number;
+    origDuration: number;
+    crewId:       string;
+  } | null>(null);
+
   // Edit mode (gates drag on desktop and enables touch-drag on mobile)
   const [editMode, setEditMode] = useState(false);
 
@@ -1980,6 +2016,51 @@ export default function Scheduler({
       window.removeEventListener('touchend', handleTouchEnd);
     };
   }, [touchGhostPos]);
+
+  // ── Resize-drag handlers (right-edge drag in edit mode) ─────────────────────
+
+  const handleResizeStart = useCallback((e: React.MouseEvent, block: ScheduleBlock) => {
+    resizeRef.current = {
+      blockId:      block.id,
+      startX:       e.clientX,
+      origDuration: block.durationDays,
+      crewId:       block.crewId,
+    };
+    setResizingId(block.id);
+    setResizeDeltaDays(0);
+  }, []);
+
+  useEffect(() => {
+    if (!resizingId) return;
+
+    const onMouseMove = (e: MouseEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const deltaX    = e.clientX - r.startX;
+      const deltaDays = Math.max(0, Math.round(deltaX / dayWidthRef.current));
+      setResizeDeltaDays(deltaDays);
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const deltaX    = e.clientX - r.startX;
+      const deltaDays = Math.max(0, Math.round(deltaX / dayWidthRef.current));
+      if (deltaDays > 0) {
+        dispatch({ type: 'EXTEND_JOB', blockId: r.blockId, days: deltaDays });
+      }
+      resizeRef.current = null;
+      setResizingId(null);
+      setResizeDeltaDays(0);
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup',   onMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup',   onMouseUp);
+    };
+  }, [resizingId]);
 
   // ── Context-menu actions ─────────────────────────────────────────────────────
 
@@ -2344,7 +2425,8 @@ export default function Scheduler({
                   {/* Job/Delay blocks */}
                   {crewBlocks.map(block => {
                     const left  = diffDays(block.startDate, viewStart) * dayWidth;
-                    const width = block.durationDays * dayWidth;
+                    const isResizing = resizingId === block.id;
+                    const width = (block.durationDays + (isResizing ? resizeDeltaDays : 0)) * dayWidth;
                     if (left + width < 0 || left > totalGridWidth) return null;
                     const job = jobsState.find(j => j.jobNumber === block.jobNumber);
                     const eqCount = (block.equipmentIds ?? []).length;
@@ -2370,6 +2452,7 @@ export default function Scheduler({
                         onDragStart={e => handleDragStart(e, block)}
                         onDragEnd={handleDragEnd}
                         onTouchStart={e => handleBlockTouchStart(e, block, color)}
+                        onResizeStart={e => handleResizeStart(e, block)}
                         onContextMenu={e => {
                           e.preventDefault();
                           setCtxMenu({ blockId: block.id, blockType: block.type, x: e.clientX, y: e.clientY });
