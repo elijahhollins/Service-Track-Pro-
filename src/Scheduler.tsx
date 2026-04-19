@@ -1263,6 +1263,7 @@ interface JobBlockProps {
   onMouseLeave: () => void;
   onTouchStart?: (e: React.TouchEvent) => void;
   onResizeStart?: (e: React.MouseEvent) => void;
+  onResizeTouchStart?: (e: React.TouchEvent) => void;
 }
 
 const JobBlock = ({
@@ -1271,7 +1272,7 @@ const JobBlock = ({
   equipmentCount, isEquipDragOver, onEquipmentDrop, onEquipmentDragOver, onEquipmentDragLeave, onEquipmentClick,
   onDragStart, onDragEnd, onContextMenu,
   onMouseEnter, onMouseMove, onMouseLeave, onTouchStart,
-  onResizeStart,
+  onResizeStart, onResizeTouchStart,
 }: JobBlockProps) => {
   const isDelay   = block.type === 'delay';
   const bgColor   = isDelay ? '#6b7280' : color;
@@ -1382,6 +1383,7 @@ const JobBlock = ({
       {editMode && !isDelay && (
         <div
           onMouseDown={e => { e.stopPropagation(); e.preventDefault(); onResizeStart?.(e); }}
+          onTouchStart={e => { e.stopPropagation(); e.preventDefault(); onResizeTouchStart?.(e); }}
           title="Drag to extend job duration"
           style={{
             position: 'absolute',
@@ -2030,6 +2032,20 @@ export default function Scheduler({
     setResizeDeltaDays(0);
   }, []);
 
+  const handleResizeTouchStart = useCallback((e: React.TouchEvent, block: ScheduleBlock) => {
+    if (!editMode) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    resizeRef.current = {
+      blockId:      block.id,
+      startX:       touch.clientX,
+      origDuration: block.durationDays,
+      crewId:       block.crewId,
+    };
+    setResizingId(block.id);
+    setResizeDeltaDays(0);
+  }, [editMode]);
+
   useEffect(() => {
     if (!resizingId) return;
 
@@ -2056,11 +2072,41 @@ export default function Scheduler({
       setResizeDeltaDays(0);
     };
 
+    const onTouchMove = (e: TouchEvent) => {
+      const r = resizeRef.current;
+      if (!r || dayWidthRef.current === 0) return;
+      e.preventDefault();
+      const touch = e.touches[0];
+      const deltaX    = touch.clientX - r.startX;
+      const deltaDays = Math.max(0, Math.round(deltaX / dayWidthRef.current));
+      setResizeDeltaDays(deltaDays);
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      const r = resizeRef.current;
+      if (!r) return;
+      const dw = dayWidthRef.current;
+      const touch = e.changedTouches[0];
+      const deltaDays = dw > 0
+        ? Math.max(0, Math.round((touch.clientX - r.startX) / dw))
+        : 0;
+      if (deltaDays > 0) {
+        dispatch({ type: 'EXTEND_JOB', blockId: r.blockId, days: deltaDays });
+      }
+      resizeRef.current = null;
+      setResizingId(null);
+      setResizeDeltaDays(0);
+    };
+
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mouseup',   onMouseUp);
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend',  onTouchEnd);
     return () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup',   onMouseUp);
+      document.removeEventListener('touchmove', onTouchMove, { passive: false } as EventListenerOptions);
+      document.removeEventListener('touchend',  onTouchEnd);
     };
   }, [resizingId, dispatch]);
 
@@ -2455,6 +2501,7 @@ export default function Scheduler({
                         onDragEnd={handleDragEnd}
                         onTouchStart={e => handleBlockTouchStart(e, block, color)}
                         onResizeStart={e => handleResizeStart(e, block)}
+                        onResizeTouchStart={e => handleResizeTouchStart(e, block)}
                         onContextMenu={e => {
                           e.preventDefault();
                           setCtxMenu({ blockId: block.id, blockType: block.type, x: e.clientX, y: e.clientY });
