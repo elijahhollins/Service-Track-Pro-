@@ -2035,7 +2035,7 @@ export default function Scheduler({
 
     const onMouseMove = (e: MouseEvent) => {
       const r = resizeRef.current;
-      if (!r) return;
+      if (!r || dayWidthRef.current === 0) return;
       const deltaX    = e.clientX - r.startX;
       const deltaDays = Math.max(0, Math.round(deltaX / dayWidthRef.current));
       setResizeDeltaDays(deltaDays);
@@ -2044,8 +2044,10 @@ export default function Scheduler({
     const onMouseUp = (e: MouseEvent) => {
       const r = resizeRef.current;
       if (!r) return;
-      const deltaX    = e.clientX - r.startX;
-      const deltaDays = Math.max(0, Math.round(deltaX / dayWidthRef.current));
+      const dw = dayWidthRef.current;
+      const deltaDays = dw > 0
+        ? Math.max(0, Math.round((e.clientX - r.startX) / dw))
+        : 0;
       if (deltaDays > 0) {
         dispatch({ type: 'EXTEND_JOB', blockId: r.blockId, days: deltaDays });
       }
@@ -2060,7 +2062,7 @@ export default function Scheduler({
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup',   onMouseUp);
     };
-  }, [resizingId]);
+  }, [resizingId, dispatch]);
 
   // ── Context-menu actions ─────────────────────────────────────────────────────
 
