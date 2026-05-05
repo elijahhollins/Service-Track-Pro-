@@ -1,5 +1,5 @@
 import React, { useState, useReducer, useRef, useCallback, useEffect } from 'react';
-import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users, Wrench, GripHorizontal } from 'lucide-react';
+import { Plus, X, ChevronLeft, ChevronRight, Clock, Calendar, Pencil, Trash2, Briefcase, Users, Wrench, GripHorizontal, RotateCcw } from 'lucide-react';
 import { supabase } from './supabase';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1795,6 +1795,40 @@ export default function Scheduler({
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
 
+  // ── Undo history ─────────────────────────────────────────────────────────────
+  // Stores up to 20 snapshots of blocks state taken just before each user action.
+  const undoHistoryRef = useRef<ScheduleBlock[][]>([]);
+  const [canUndo, setCanUndo] = useState(false);
+
+  /** Dispatch a user action while recording the current state for undo. */
+  const dispatchWithHistory = useCallback((action: Action) => {
+    undoHistoryRef.current = [...undoHistoryRef.current.slice(-19), blocksRef.current];
+    setCanUndo(true);
+    dispatch(action);
+  }, [dispatch]);
+
+  /** Restore the most recent snapshot from undo history. */
+  const handleUndo = useCallback(() => {
+    if (undoHistoryRef.current.length === 0) return;
+    const prev = undoHistoryRef.current[undoHistoryRef.current.length - 1];
+    undoHistoryRef.current = undoHistoryRef.current.slice(0, -1);
+    setCanUndo(undoHistoryRef.current.length > 0);
+    dispatch({ type: 'REPLACE_ALL', blocks: prev });
+  }, [dispatch]);
+
+  // Keyboard shortcut: Ctrl+Z / Cmd+Z to undo (only active in edit mode)
+  useEffect(() => {
+    if (!editMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [editMode, handleUndo]);
+
   // Notify parent when blocks change
   const prevRef = useRef(blocks);
   useEffect(() => {
@@ -1855,9 +1889,9 @@ export default function Scheduler({
         shiftDays: movingBlock.durationDays,
       });
     } else {
-      dispatch({ type: 'MOVE_BLOCK', id: blockId, crewId, startDate: newStart });
+      dispatchWithHistory({ type: 'MOVE_BLOCK', id: blockId, crewId, startDate: newStart });
     }
-  }, [dayWidth, viewStart, dragOffsetDays]);
+  }, [dayWidth, viewStart, dragOffsetDays, dispatchWithHistory]);
 
   // ── Equipment drag handlers ──────────────────────────────────────────────────
 
@@ -1867,9 +1901,9 @@ export default function Scheduler({
   }, []);
 
   const handleEquipDropOnBlock = useCallback((blockId: string, equipmentId: number) => {
-    dispatch({ type: 'ASSIGN_EQUIPMENT', blockId, equipmentId });
+    dispatchWithHistory({ type: 'ASSIGN_EQUIPMENT', blockId, equipmentId });
     setEquipDragOverBlockId(null);
-  }, []);
+  }, [dispatchWithHistory]);
 
   // ── Equipment touch-drag (mobile — mirrors job-block touch-drag) ────────────
   // Uses Touch Events (touchstart/touchmove/touchend) with passive:false so that
@@ -1907,7 +1941,7 @@ export default function Scheduler({
       const blockEl = els.find(el => (el as HTMLElement).dataset?.blockId) as HTMLElement | undefined;
       const targetBlockId = blockEl?.dataset.blockId;
       if (targetBlockId && equipTouchRef.current !== null) {
-        dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipTouchRef.current });
+        dispatchWithHistory({ type: 'ASSIGN_EQUIPMENT', blockId: targetBlockId, equipmentId: equipTouchRef.current });
       }
       equipTouchRef.current = null;
       setEquipTouchActiveId(null);
@@ -1921,7 +1955,7 @@ export default function Scheduler({
       window.removeEventListener('touchmove', onMove, { passive: false } as EventListenerOptions);
       window.removeEventListener('touchend', onEnd);
     };
-  }, [equipTouchGhostPos, dispatch]);
+  }, [equipTouchGhostPos, dispatchWithHistory]);
 
   // ── Touch-drag handlers (mobile edit mode) ───────────────────────────────────
 
@@ -2002,7 +2036,7 @@ export default function Scheduler({
               shiftDays:     movingBlock.durationDays,
             });
           } else {
-            dispatch({ type: 'MOVE_BLOCK', id: drag.blockId, crewId: targetCrew.id, startDate: newStart });
+            dispatchWithHistory({ type: 'MOVE_BLOCK', id: drag.blockId, crewId: targetCrew.id, startDate: newStart });
           }
         }
       }
@@ -2115,15 +2149,15 @@ export default function Scheduler({
   const handleDelayConfirm = (days: number) => {
     if (!dayPrompt) return;
     if (dayPrompt.action === 'crew_delay') {
-      dispatch({ type: 'SHIFT_CREW', crewId: dayPrompt.blockId, fromDate: todayISO, days });
+      dispatchWithHistory({ type: 'SHIFT_CREW', crewId: dayPrompt.blockId, fromDate: todayISO, days });
     } else {
-      dispatch({ type: 'INSERT_DELAY', blockId: dayPrompt.blockId, days });
+      dispatchWithHistory({ type: 'INSERT_DELAY', blockId: dayPrompt.blockId, days });
     }
   };
 
   const handleExtendConfirm = (days: number) => {
     if (!dayPrompt) return;
-    dispatch({ type: 'EXTEND_JOB', blockId: dayPrompt.blockId, days });
+    dispatchWithHistory({ type: 'EXTEND_JOB', blockId: dayPrompt.blockId, days });
   };
 
   // ── Build month-label spans for header ──────────────────────────────────────
@@ -2208,6 +2242,22 @@ export default function Scheduler({
           >
             <Pencil className="w-3.5 h-3.5" /> {editMode ? 'Editing' : 'Edit'}
           </button>
+          {/* Undo button — visible only in edit mode */}
+          {editMode && (
+            <button
+              onClick={handleUndo}
+              disabled={!canUndo}
+              aria-label="Undo last action"
+              title="Undo last action (Ctrl+Z)"
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors border ${
+                canUndo
+                  ? 'bg-white/10 hover:bg-white/20 text-slate-200 border-white/10'
+                  : 'bg-white/5 text-slate-600 border-white/5 cursor-not-allowed'
+              }`}
+            >
+              <RotateCcw className="w-3.5 h-3.5" /> Undo
+            </button>
+          )}
           {isAdmin && (
             <>
               <button
@@ -2490,7 +2540,7 @@ export default function Scheduler({
                         isDragging={draggingId === block.id}
                         isAdmin={isAdmin}
                         editMode={editMode}
-                        onDelete={() => dispatch({ type: 'DELETE_BLOCK', id: block.id })}
+                        onDelete={() => dispatchWithHistory({ type: 'DELETE_BLOCK', id: block.id })}
                         equipmentCount={eqCount}
                         isEquipDragOver={equipDragOverBlockId === block.id}
                         onEquipmentDrop={equipId => handleEquipDropOnBlock(block.id, equipId)}
@@ -2597,7 +2647,7 @@ export default function Scheduler({
           menu={ctxMenu}
           onDelay={() => setDayPrompt({ action: 'delay',  blockId: ctxMenu.blockId })}
           onExtend={() => setDayPrompt({ action: 'extend', blockId: ctxMenu.blockId })}
-          onDelete={() => dispatch({ type: 'DELETE_BLOCK', id: ctxMenu.blockId })}
+          onDelete={() => dispatchWithHistory({ type: 'DELETE_BLOCK', id: ctxMenu.blockId })}
           onClose={() => setCtxMenu(null)}
         />
       )}
@@ -2622,7 +2672,7 @@ export default function Scheduler({
           crewName={pendingMove.crewName}
           conflictCount={pendingMove.conflictCount}
           onConfirm={() => {
-            dispatch({
+            dispatchWithHistory({
               type: 'MOVE_BLOCK_PUSH',
               id:        pendingMove.blockId,
               crewId:    pendingMove.crewId,
@@ -2643,7 +2693,7 @@ export default function Scheduler({
           crewName={pendingAdd.crewName}
           conflictCount={pendingAdd.conflictCount}
           onConfirm={() => {
-            dispatch({
+            dispatchWithHistory({
               type:      'ADD_BLOCK_PUSH',
               block:     pendingAdd.block,
               shiftDays: pendingAdd.shiftDays,
@@ -2672,7 +2722,7 @@ export default function Scheduler({
                 shiftDays:     block.durationDays,
               });
             } else {
-              dispatch({ type: 'ADD_BLOCK', block });
+              dispatchWithHistory({ type: 'ADD_BLOCK', block });
             }
           }}
           onClose={() => setShowAddModal(false)}
@@ -2707,8 +2757,8 @@ export default function Scheduler({
             job={eqJob}
             crew={eqCrew}
             equipmentList={equipmentList}
-            onAssign={equipmentId => dispatch({ type: 'ASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
-            onUnassign={equipmentId => dispatch({ type: 'UNASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
+            onAssign={equipmentId => dispatchWithHistory({ type: 'ASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
+            onUnassign={equipmentId => dispatchWithHistory({ type: 'UNASSIGN_EQUIPMENT', blockId: equipModalBlockId, equipmentId })}
             onClose={() => setEquipModalBlockId(null)}
           />
         );
